@@ -2,9 +2,10 @@
 
 /**
  * Zinc Drive — production single-file Node.js application.
- * Stack: Express · express-session · connect-mongo · Multer · Mongoose · dotenv · Helmet
+ * Stack: Express · express-session · connect-mongo · Multer · Mongoose · dotenv · Helmet · Cloudinary
  * Typography: Playfair Display · Merriweather · Poppins
  * Icons: Font Awesome 6
+ * Storage: Cloudinary (works on Render free tier — no disk needed)
  *
  * Run with: node server.js
  */
@@ -34,6 +35,7 @@ const helmet = require('helmet');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const cloudinary = require('cloudinary').v2;
 
 /* ------------------------------------------------------------------ *
  * connect-mongo — tolerant loader (v3 / v4 / v5)
@@ -51,22 +53,15 @@ let MongoStore;
   if (typeof mod === 'function') {
     try {
       const v3 = mod(session);
-      MongoStore = {
-        create(opts) { return new v3(opts); }
-      };
-      console.warn(
-        '[zinc-drive] Legacy connect-mongo v3 detected — using compatibility shim.\n' +
-        '            Upgrade with: npm i connect-mongo@5.1.0'
-      );
+      MongoStore = { create(opts) { return new v3(opts); } };
+      console.warn('[zinc-drive] Legacy connect-mongo v3 detected — using compatibility shim.');
       return;
     } catch (e) { /* fall through */ }
   }
 
   throw new Error(
     'connect-mongo export shape not recognised.\n' +
-    'Please run:\n' +
-    '  npm uninstall connect-mongo\n' +
-    '  npm install connect-mongo@5.1.0'
+    'Run: npm uninstall connect-mongo && npm install connect-mongo@5.1.0'
   );
 })();
 
@@ -80,15 +75,32 @@ const MONGO_URI = process.env.MONGO_URI;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PROD = NODE_ENV === 'production';
 
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
+
 if (!MONGO_URI) {
   console.error('\n[FATAL] MONGO_URI is not set. Create a .env file with MONGO_URI=...\n');
   process.exit(1);
 }
+if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+  console.error('\n[FATAL] Cloudinary env vars missing.');
+  console.error('Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET in .env\n');
+  process.exit(1);
+}
 
+cloudinary.config({
+  cloud_name: CLOUDINARY_CLOUD_NAME,
+  api_key: CLOUDINARY_API_KEY,
+  api_secret: CLOUDINARY_API_SECRET,
+  secure: true
+});
+
+// Kept only for legacy previews; no disk writes now that we use Cloudinary.
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
-
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /* ------------------------------------------------------------------ *
  * Mongoose schemas
@@ -126,7 +138,8 @@ const fileSchema = new mongoose.Schema(
     description: { type: String, default: '', maxlength: 2000 },
     visibility: { type: String, enum: ['public', 'private'], default: 'public', index: true },
     originalName: { type: String, required: true, maxlength: 300 },
-    storedName: { type: String, required: true, unique: true },
+    storedName: { type: String, required: true },   // Cloudinary public_id
+    fileUrl: { type: String, required: true },      // Cloudinary secure_url
     size: { type: Number, required: true, min: 0 },
     mimeType: { type: String, default: 'application/octet-stream' },
     downloads: { type: Number, default: 0 },
@@ -202,11 +215,6 @@ function normalizeOriginalName(name) {
   } catch (err) {
     return String(name);
   }
-}
-
-function safeUnlink(absPath) {
-  if (!absPath) return;
-  fs.unlink(absPath, () => {});
 }
 
 function fileKind(mime, name) {
@@ -292,6 +300,33 @@ function renderStars(value, size) {
 
 function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(id);
+}
+
+/* ------------------------------------------------------------------ *
+ * Cloudinary upload helper
+ * ------------------------------------------------------------------ */
+
+function uploadBufferToCloudinary(buffer, originalName) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: 'zinc-drive',
+        resource_type: 'auto',
+        use_filename: true,
+        unique_filename: true,
+        filename_override: originalName
+      },
+      (error, result) => (error ? reject(error) : resolve(result))
+    );
+    stream.end(buffer);
+  });
+}
+
+function buildCloudinaryDownloadUrl(fileUrl, originalName) {
+  if (!fileUrl) return fileUrl;
+  // Add fl_attachment flag so Cloudinary serves a download response.
+  const base = fileUrl.replace('/upload/', '/upload/fl_attachment:' + encodeURIComponent(originalName) + '/');
+  return base;
 }
 
 /* ------------------------------------------------------------------ *
@@ -663,19 +698,19 @@ function renderLogin(ctx) {
 
 function renderPreview(record) {
   const kind = fileKind(record.mimeType, record.originalName);
-  const src = '/files/' + encodeURIComponent(String(record._id)) + '/raw';
+  const src = record.fileUrl;                                   // Cloudinary CDN URL
   const typeBadge = '<span class="type-badge">' + kindLabel(kind) + '</span>';
   const visBadge = '<span class="vis-badge">' + (record.visibility === 'public' ? 'PUBLIC' : 'PRIVATE') + '</span>';
   const href = '/files/' + encodeURIComponent(String(record._id));
 
   if (kind === 'image') {
     return '<a class="preview" href="' + href + '">' +
-      '<img src="' + src + '" alt="' + escapeHtml(record.chapterName) + '" loading="lazy">' +
+      '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(record.chapterName) + '" loading="lazy">' +
       typeBadge + visBadge + '</a>';
   }
   if (kind === 'video') {
     return '<a class="preview" href="' + href + '">' +
-      '<video src="' + src + '" muted preload="metadata"></video>' +
+      '<video src="' + escapeHtml(src) + '" muted preload="metadata"></video>' +
       '<div class="play-overlay"><i class="fa-solid fa-circle-play"></i></div>' +
       typeBadge + visBadge + '</a>';
   }
@@ -968,7 +1003,7 @@ function renderFileDetail(ctx) {
   const { user, record, owner, notice = '', error = '' } = ctx;
   const kind = fileKind(record.mimeType, record.originalName);
   const fid = String(record._id);
-  const src = '/files/' + encodeURIComponent(fid) + '/raw';
+  const src = record.fileUrl;
   const avg = averageRating(record);
   const ratingCount = record.ratings.length;
   const myRating = userRating(record, user._id);
@@ -979,13 +1014,13 @@ function renderFileDetail(ctx) {
 
   let preview;
   if (kind === 'image') {
-    preview = '<img src="' + src + '" alt="' + escapeHtml(record.chapterName) + '">';
+    preview = '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(record.chapterName) + '">';
   } else if (kind === 'video') {
-    preview = '<video src="' + src + '" controls preload="metadata"></video>';
+    preview = '<video src="' + escapeHtml(src) + '" controls preload="metadata"></video>';
   } else if (kind === 'audio') {
-    preview = '<audio src="' + src + '" controls preload="metadata"></audio>';
+    preview = '<audio src="' + escapeHtml(src) + '" controls preload="metadata"></audio>';
   } else if (kind === 'pdf') {
-    preview = '<iframe src="' + src + '" title="PDF preview"></iframe>';
+    preview = '<iframe src="' + escapeHtml(src) + '" title="PDF preview"></iframe>';
   } else {
     preview = '<div class="placeholder"><i class="' + kindIconClass(kind) + '"></i>' +
       '<div class="kind-label">' + kindLabel(kind) + '</div>' +
@@ -1186,9 +1221,9 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://cdnjs.cloudflare.com'],
       fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com', 'https://cdnjs.cloudflare.com'],
-      imgSrc: ["'self'", 'data:', 'blob:'],
-      mediaSrc: ["'self'", 'blob:'],
-      frameSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https://res.cloudinary.com'],
+      mediaSrc: ["'self'", 'blob:', 'https://res.cloudinary.com'],
+      frameSrc: ["'self'", 'https://res.cloudinary.com'],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
       formAction: ["'self'"],
@@ -1197,7 +1232,7 @@ app.use(helmet({
     }
   },
   crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: 'same-site' },
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
 }));
 
@@ -1212,10 +1247,7 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 
 /* ---- Session + Mongo store ----
- * Cookie secure is set to 'auto':
- *   - On HTTP (localhost dev) → no Secure flag → cookie works
- *   - On HTTPS (production behind TLS proxy) → Secure flag applied automatically
- * This is the fix for the "redirected to /register after login" bug.
+ * secure:'auto' works on HTTP (localhost) AND HTTPS (production behind proxy).
  */
 app.use(session({
   name: 'zinc.sid',
@@ -1232,12 +1264,12 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: 'auto',        // ← THE FIX
+    secure: 'auto',
     maxAge: 1000 * 60 * 60 * 8
   }
 }));
 
-/* ---- Attach current user to every request ---- */
+/* ---- Attach current user ---- */
 app.use(async (req, res, next) => {
   req.user = null;
   if (req.session && req.session.userId) {
@@ -1261,20 +1293,11 @@ function requireAuth(req, res, next) {
 }
 
 /* ------------------------------------------------------------------ *
- * Multer
+ * Multer — memory storage → Cloudinary
  * ------------------------------------------------------------------ */
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => {
-    const unique = Date.now() + '-' + crypto.randomBytes(8).toString('hex');
-    const ext = path.extname(file.originalname || '').slice(0, 12).toLowerCase();
-    cb(null, unique + ext);
-  }
-});
-
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE, files: 1 }
 });
 
@@ -1296,44 +1319,6 @@ function uploadSingle(req, res, next) {
 }
 
 /* ------------------------------------------------------------------ *
- * Raw streaming
- * ------------------------------------------------------------------ */
-
-function streamInline(req, res, record) {
-  const absolutePath = path.join(UPLOAD_DIR, record.storedName);
-  if (!fs.existsSync(absolutePath)) {
-    return res.status(404).send(renderErrorPage(404, 'Not found', 'The file is missing from storage.'));
-  }
-  const kind = fileKind(record.mimeType, record.originalName);
-  const inlineSafe = kind === 'image' || kind === 'video' || kind === 'audio' || kind === 'pdf';
-  const stat = fs.statSync(absolutePath);
-  const range = req.headers.range;
-
-  res.setHeader('Content-Type', record.mimeType || 'application/octet-stream');
-  res.setHeader('Accept-Ranges', 'bytes');
-  res.setHeader('Content-Disposition', (inlineSafe ? 'inline' : 'attachment') + "; filename*=UTF-8''" + encodeURIComponent(record.originalName));
-  res.setHeader('Cache-Control', 'private, max-age=60');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-
-  if (range && inlineSafe) {
-    const parts = String(range).replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10) || 0;
-    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
-    if (isNaN(start) || isNaN(end) || start > end || end >= stat.size) {
-      res.status(416);
-      res.setHeader('Content-Range', 'bytes */' + stat.size);
-      return res.end();
-    }
-    res.status(206);
-    res.setHeader('Content-Range', 'bytes ' + start + '-' + end + '/' + stat.size);
-    res.setHeader('Content-Length', (end - start) + 1);
-    return fs.createReadStream(absolutePath, { start, end }).pipe(res);
-  }
-  res.setHeader('Content-Length', stat.size);
-  return fs.createReadStream(absolutePath).pipe(res);
-}
-
-/* ------------------------------------------------------------------ *
  * Routes — home / gallery
  * ------------------------------------------------------------------ */
 
@@ -1345,7 +1330,6 @@ app.get('/', requireAuth, async (req, res, next) => {
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
 
     const q = {};
-
     if (filter === 'mine') {
       q.owner = user._id;
     } else if (filter === 'subscribed') {
@@ -1370,7 +1354,6 @@ app.get('/', requireAuth, async (req, res, next) => {
     let sortSpec = { createdAt: -1 };
     if (sort === 'downloads') sortSpec = { downloads: -1, createdAt: -1 };
     else if (sort === 'name') sortSpec = { chapterName: 1 };
-    else if (sort === 'rating') sortSpec = { createdAt: -1 };
 
     let records = await File.find(q)
       .populate('owner', 'name username')
@@ -1378,9 +1361,7 @@ app.get('/', requireAuth, async (req, res, next) => {
       .limit(300)
       .lean();
 
-    if (sort === 'rating') {
-      records = records.sort((a, b) => averageRating(b) - averageRating(a));
-    }
+    if (sort === 'rating') records = records.sort((a, b) => averageRating(b) - averageRating(a));
 
     const notice = req.query.upload === 'success' ? 'Your file was uploaded successfully.' : '';
     res.send(renderHome({ user, records, notice, filter, sort, query }));
@@ -1413,9 +1394,7 @@ app.get('/gallery', requireAuth, async (req, res, next) => {
       .limit(300)
       .lean();
 
-    if (sort === 'rating') {
-      records = records.sort((a, b) => averageRating(b) - averageRating(a));
-    }
+    if (sort === 'rating') records = records.sort((a, b) => averageRating(b) - averageRating(a));
 
     res.send(renderGallery({ user, records, sort, query }));
   } catch (err) { next(err); }
@@ -1471,7 +1450,6 @@ app.post('/register', async (req, res, next) => {
       passwordHash: hashPassword(password)
     });
 
-    // Mark this browser as "has an account" so '/' sends them to /login (not /register).
     req.session.registered = true;
     req.session.save((err) => {
       if (err) console.error('[zinc-drive] register save error:', err);
@@ -1511,10 +1489,6 @@ app.post('/login', async (req, res, next) => {
       return res.status(401).send(renderLogin({ error: 'Invalid username or password.', values: { username } }));
     }
 
-    // Bind the logged-in user to the existing session, then persist it before redirecting.
-    // We intentionally avoid req.session.regenerate() here — on some connect-mongo setups
-    // it produced a race condition where the new cookie wasn't sent before the redirect,
-    // causing the browser to arrive at '/' with no session (and get bounced to /register).
     req.session.userId = String(user._id);
     req.session.registered = true;
 
@@ -1533,24 +1507,15 @@ app.post('/login', async (req, res, next) => {
 
 app.get('/logout', (req, res) => {
   if (!req.session) return res.redirect('/login');
-  // Destroy the session data but keep a "registered" flag so '/' sends us to /login.
-  const sid = req.sessionID;
   req.session.destroy((err) => {
     if (err) console.error('[zinc-drive] logout destroy error:', err);
     res.clearCookie('zinc.sid');
-    // Create a small fresh session that only remembers "registered".
-    req.session = null;
-    // Issue a minimal cookie via a new session
-    const newSess = express.session ? null : null; // no-op placeholder
-    // Simply redirect; on next request the root route sends to /register if no cookie,
-    // which is fine because the user can log in again from there.
     res.redirect('/login');
-    void sid;
   });
 });
 
 /* ------------------------------------------------------------------ *
- * Routes — upload
+ * Routes — upload (Cloudinary)
  * ------------------------------------------------------------------ */
 
 app.get('/upload', requireAuth, (req, res) => {
@@ -1558,7 +1523,6 @@ app.get('/upload', requireAuth, (req, res) => {
 });
 
 app.post('/upload', requireAuth, uploadSingle, async (req, res, next) => {
-  const cleanup = () => { if (req.file) safeUnlink(path.join(UPLOAD_DIR, req.file.filename)); };
   try {
     const user = req.user;
     const body = req.body || {};
@@ -1570,10 +1534,7 @@ app.post('/upload', requireAuth, uploadSingle, async (req, res, next) => {
     const visibility = body.visibility === 'private' ? 'private' : 'public';
     const values = { chapterNo, chapterName, subject, writer, description, visibility };
 
-    const fail = (message, status) => {
-      cleanup();
-      return res.status(status).send(renderUpload({ user, error: message, values }));
-    };
+    const fail = (message, status) => res.status(status).send(renderUpload({ user, error: message, values }));
 
     if (!req.file) return fail('Please choose a file to upload.', 400);
     if (!chapterNo || Number.isNaN(Number(chapterNo))) return fail('Chapter number is required and must be a valid number.', 400);
@@ -1583,19 +1544,23 @@ app.post('/upload', requireAuth, uploadSingle, async (req, res, next) => {
     }
     if (req.file.size > MAX_FILE_SIZE) return fail('File is too large. The maximum allowed size is 100 MB.', 413);
 
+    // Upload the buffer to Cloudinary (no disk usage).
+    const result = await uploadBufferToCloudinary(req.file.buffer, req.file.originalname);
+
     await File.create({
       owner: user._id,
       ownerUsername: user.username,
       chapterNo, chapterName, subject, writer, description, visibility,
       originalName: normalizeOriginalName(req.file.originalname),
-      storedName: req.file.filename,
-      size: req.file.size,
+      storedName: result.public_id,
+      fileUrl: result.secure_url,
+      size: result.bytes || req.file.size,
       mimeType: req.file.mimetype || 'application/octet-stream'
     });
 
     res.redirect('/?upload=success');
   } catch (err) {
-    cleanup();
+    console.error('[zinc-drive] Cloudinary upload failed:', err);
     next(err);
   }
 });
@@ -1644,7 +1609,7 @@ app.get('/files/:id/raw', requireAuth, async (req, res, next) => {
     const result = await findAccessibleFile(req, req.params.id);
     if (result.error === 'notfound') return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
     if (result.error === 'forbidden') return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You do not have access to this file.'));
-    return streamInline(req, res, result.record);
+    return res.redirect(result.record.fileUrl);
   } catch (err) { next(err); }
 });
 
@@ -1654,19 +1619,10 @@ app.get('/files/:id/download', requireAuth, async (req, res, next) => {
     if (result.error === 'notfound') return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
     if (result.error === 'forbidden') return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You do not have access to this file.'));
 
-    const record = result.record;
-    const absolutePath = path.join(UPLOAD_DIR, record.storedName);
-    if (!fs.existsSync(absolutePath)) {
-      return res.status(404).send(renderErrorPage(404, 'Not found', 'The file is missing from storage.'));
-    }
+    await File.updateOne({ _id: result.record._id }, { $inc: { downloads: 1 } });
 
-    await File.updateOne({ _id: record._id }, { $inc: { downloads: 1 } });
-
-    res.download(absolutePath, record.originalName, (err) => {
-      if (err && !res.headersSent) {
-        res.status(500).send(renderErrorPage(500, 'Error', 'Could not download the file.'));
-      }
-    });
+    const dl = buildCloudinaryDownloadUrl(result.record.fileUrl, result.record.originalName);
+    return res.redirect(dl);
   } catch (err) { next(err); }
 });
 
@@ -1795,7 +1751,7 @@ async function start() {
     const server = app.listen(PORT, () => {
       console.log('[zinc-drive] Running at http://localhost:' + PORT);
       console.log('[zinc-drive] Environment: ' + NODE_ENV);
-      console.log('[zinc-drive] Uploads directory: ' + UPLOAD_DIR);
+      console.log('[zinc-drive] Storage: Cloudinary (' + CLOUDINARY_CLOUD_NAME + ')');
       console.log('[zinc-drive] Max upload size: ' + formatBytes(MAX_FILE_SIZE));
     });
 
