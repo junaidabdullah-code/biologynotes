@@ -7,7 +7,7 @@
  * Icons: Font Awesome 6
  * Storage: Cloudinary (works on Render free tier)
  * Thumbnails: A4 aspect-ratio (210:297) generated via Cloudinary transformations
- * Features: auth, uploads, ratings, subscriptions, delete
+ * Features: auth, uploads, ratings, subscriptions, delete, share, print
  *
  * Run with: node server.js
  */
@@ -318,7 +318,6 @@ function fileExtUpper(name) {
  * Cloudinary helpers
  * ------------------------------------------------------------------ */
 
-/** Upload an in-memory buffer to Cloudinary. */
 function uploadBufferToCloudinary(buffer, originalName) {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -335,10 +334,6 @@ function uploadBufferToCloudinary(buffer, originalName) {
   });
 }
 
-/**
- * Delete a Cloudinary asset (and any derived thumbnails).
- * `resourceType` MUST match what Cloudinary stored ('image' | 'video' | 'raw').
- */
 function deleteFromCloudinary(publicId, resourceType) {
   return new Promise((resolve) => {
     if (!publicId) return resolve({ ok: false, error: 'no-public-id' });
@@ -357,12 +352,6 @@ function deleteFromCloudinary(publicId, resourceType) {
   });
 }
 
-/**
- * Builds an A4-shaped thumbnail URL (620×877) via Cloudinary transformations.
- *
- * Returns '' when no thumbnail is possible (audio, raw docs like .docx/.zip/.txt).
- * Callers should render the A4 placeholder sheet when this returns ''.
- */
 function buildA4ThumbnailUrl(record) {
   const kind = fileKind(record.mimeType, record.originalName);
   const pid = record.storedName;
@@ -409,17 +398,6 @@ function buildA4ThumbnailUrl(record) {
   return '';
 }
 
-/**
- * Builds a Cloudinary URL that forces a download.
- *
- * Rules:
- *  - Images / videos / PDFs: use `fl_attachment:<name>` (transformable resource types).
- *  - Raw files (.docx/.zip/.txt/...): cannot be transformed — Cloudinary already
- *    serves them with Content-Disposition: attachment, so return the plain URL.
- *  - The custom filename inside `fl_attachment:` only allows word chars,
- *    hyphens, spaces, and `!`. Dots are NOT allowed (that was the "Invalid flag
- *    in transformation: docx" bug).
- */
 function buildCloudinaryDownloadUrl(fileUrl, originalName, mimeType) {
   if (!fileUrl) return fileUrl;
 
@@ -557,7 +535,6 @@ p{margin:0}
 .file-card{background:#fff;border:1px solid #e4e4e7;display:flex;flex-direction:column;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
 .file-card:hover{border-color:#d4d4d8;box-shadow:0 4px 14px rgba(24,24,27,.08);transform:translateY(-2px)}
 
-/* ---------- A4 preview area ---------- */
 .preview{
   position:relative;display:flex;align-items:center;justify-content:center;
   height:280px;background:
@@ -684,7 +661,6 @@ p{margin:0}
 .detail-preview .placeholder i{font-size:64px;color:#52525b}
 .detail-preview .placeholder .kind-label{font-size:11px;letter-spacing:.16em;font-weight:600;color:#fafafa;font-family:'Poppins',sans-serif}
 
-/* Big A4 sheet on detail page (for raw docs / fallback) */
 .detail-a4-wrap{background:#0a0a0a;padding:26px;display:flex;align-items:center;justify-content:center;min-height:420px}
 .detail-a4{
   aspect-ratio:210/297;width:100%;max-width:420px;background:#fff;border:1px solid #d4d4d8;
@@ -724,6 +700,35 @@ p{margin:0}
   width:100%;
   max-width:230px;
 }
+
+/* Share & Print card */
+.share-card{background:#fff;border:1px solid #e4e4e7;padding:18px;display:flex;flex-direction:column;gap:14px}
+.share-card-head{
+  font-family:'Poppins',sans-serif;font-size:12.5px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;color:#52525b;
+  display:flex;align-items:center;gap:8px;
+}
+.share-card-head i{font-size:12px;color:#a1a1aa}
+.share-buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.share-btn{
+  height:46px;background:#fff;border:1px solid #e4e4e7;color:#3f3f46;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  font-size:16px;text-decoration:none;
+  transition:background-color .15s ease,color .15s ease,border-color .15s ease,transform .05s ease;
+}
+.share-btn i{font-size:17px}
+.share-btn:active{transform:translateY(1px)}
+.share-btn:hover{background:#f4f4f5;color:#18181b;border-color:#d4d4d8}
+.share-btn.wa:hover{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.share-btn.fb:hover{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.share-btn.tw:hover{background:#f4f4f5;color:#0f172a;border-color:#d4d4d8}
+.share-btn.li:hover{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.share-btn.tg:hover{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.share-btn.rd:hover{background:#fee2e2;color:#b91c1c;border-color:#fecaca}
+.share-btn.em:hover{background:#f4f4f5;color:#18181b;border-color:#d4d4d8}
+.share-btn.cp:hover{background:#f4f4f5;color:#18181b;border-color:#d4d4d8}
+.share-btn.cp.copied{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.share-hint{font-size:11.5px;color:#a1a1aa;font-family:'Poppins',sans-serif;margin-top:-4px}
 
 .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:18px;border-top:1px solid #f4f4f5}
 .meta-item{display:flex;flex-direction:column;gap:3px;border-bottom:1px solid #f4f4f5;padding:12px 0}
@@ -787,6 +792,73 @@ p{margin:0}
   .dropzone-icon{width:56px;height:56px;font-size:22px}
   .dropzone-title{font-size:17px}
   .preview{height:240px;padding:14px}
+}
+
+/* ------------------------------------------------------------------ *
+ * PRINT STYLES
+ * When the user clicks "Print / Save as PDF", hide UI chrome and show
+ * only the file title, preview, and metadata in a clean page layout.
+ * ------------------------------------------------------------------ */
+@media print {
+  /* Hide global chrome */
+  .topnav, .nav-links, .nav-right, .banner, .actions, .row.actions,
+  .back-row, .action-row, .share-card, .a4-thumb-card, .uploader-card,
+  .rating-block, .alert, .btn, .chips, .toolbar, .section-head,
+  .detail-grid aside, .file-foot, .empty, .foot-note { display: none !important; }
+
+  /* Page setup */
+  @page { margin: 14mm 12mm; size: A4; }
+
+  html, body { background: #fff !important; color: #000 !important; font-size: 11pt; line-height: 1.5; }
+  body { font-family: 'Merriweather', Georgia, 'Times New Roman', serif; }
+
+  .container { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
+
+  /* Flatten the grid — main column only */
+  .detail-grid { display: block !important; grid-template-columns: 1fr !important; gap: 0 !important; }
+
+  /* Preview — no black background, no border, no min-height */
+  .detail-preview {
+    background: #fff !important; border: 0 !important;
+    min-height: 0 !important; padding: 0 !important; margin-bottom: 16pt;
+    display: block !important;
+  }
+  .detail-preview img, .detail-preview video { max-width: 100% !important; max-height: 130mm !important; }
+  .detail-preview iframe { width: 100% !important; height: 160mm !important; border: 1px solid #ccc !important; }
+
+  .detail-a4-wrap { background: #fff !important; padding: 0 !important; border: 0 !important; min-height: 0 !important; }
+  .detail-a4 { box-shadow: none !important; border: 1px solid #ccc !important; max-width: 130mm !important; margin: 0 auto 12pt !important; }
+
+  /* Cards — flatten */
+  .card { box-shadow: none !important; border: 0 !important; padding: 0 !important; background: #fff !important; }
+
+  /* Headings */
+  h1 { font-size: 20pt !important; color: #000 !important; margin: 0 0 4pt !important; }
+  h2 { font-size: 15pt !important; color: #000 !important; }
+  h3 { font-size: 12pt !important; color: #000 !important; }
+  p, .sub { color: #333 !important; font-size: 10.5pt !important; }
+
+  /* Metadata table */
+  .meta-grid {
+    display: grid !important; grid-template-columns: 1fr 1fr !important;
+    border-top: 1px solid #ccc !important; margin-top: 16pt !important;
+    gap: 0 !important;
+  }
+  .meta-item { border-bottom: 1px solid #eee !important; padding: 8pt 0 !important; }
+  .meta-item:nth-child(odd) { padding-right: 14pt !important; }
+  .meta-item .k { color: #666 !important; font-size: 8pt !important; }
+  .meta-item .v { color: #000 !important; font-size: 10pt !important; }
+
+  /* Badges */
+  .badge { border: 1px solid #ccc !important; background: #f4f4f4 !important; color: #333 !important; }
+  .badge-dark { background: #333 !important; color: #fff !important; border-color: #333 !important; }
+
+  /* Links — plain */
+  a { color: #000 !important; text-decoration: none !important; }
+  a[href]::after { content: ''; } /* avoid printing full URLs */
+
+  /* Avoid awkward breaks */
+  h1, h2, h3, .meta-grid, .detail-preview { page-break-inside: avoid; }
 }
 `;
 
@@ -897,7 +969,6 @@ function renderLogin(ctx) {
  * Preview / thumbnail renderer (A4)
  * ------------------------------------------------------------------ */
 
-/** Returns just the inner A4 sheet markup (fallback + optional <img>). */
 function renderA4ThumbInner(record, kind) {
   const ext = fileExtUpper(record.originalName);
   const fallback =
@@ -946,7 +1017,6 @@ function renderCard(record, viewer) {
 
   let actionBtn = '';
   if (viewer && isSelf) {
-    // Owner sees a Delete button (with confirm prompt).
     actionBtn = '<form method="POST" action="/files/' + encodeURIComponent(String(record._id)) + '/delete" class="inline-form" onsubmit="return confirm(\'Delete this file permanently? This cannot be undone.\');">' +
       '<button type="submit" class="btn btn-xs btn-danger" title="Delete file">' +
         '<i class="fa-solid fa-trash-can"></i>Delete' +
@@ -1211,6 +1281,31 @@ function renderUpload(ctx) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Share & Print card
+ * ------------------------------------------------------------------ */
+
+function renderShareCard() {
+  return '' +
+    '<div class="share-card">' +
+      '<div class="share-card-head"><i class="fa-solid fa-share-nodes"></i>Share &amp; Print</div>' +
+      '<div class="share-buttons">' +
+        '<button type="button" class="share-btn wa" data-share="whatsapp" title="Share on WhatsApp" aria-label="Share on WhatsApp"><i class="fa-brands fa-whatsapp"></i></button>' +
+        '<button type="button" class="share-btn fb" data-share="facebook" title="Share on Facebook" aria-label="Share on Facebook"><i class="fa-brands fa-facebook-f"></i></button>' +
+        '<button type="button" class="share-btn tw" data-share="twitter" title="Share on X (Twitter)" aria-label="Share on X"><i class="fa-brands fa-x-twitter"></i></button>' +
+        '<button type="button" class="share-btn li" data-share="linkedin" title="Share on LinkedIn" aria-label="Share on LinkedIn"><i class="fa-brands fa-linkedin-in"></i></button>' +
+        '<button type="button" class="share-btn tg" data-share="telegram" title="Share on Telegram" aria-label="Share on Telegram"><i class="fa-brands fa-telegram"></i></button>' +
+        '<button type="button" class="share-btn rd" data-share="reddit" title="Share on Reddit" aria-label="Share on Reddit"><i class="fa-brands fa-reddit-alien"></i></button>' +
+        '<button type="button" class="share-btn em" data-share="email" title="Share via Email" aria-label="Share via Email"><i class="fa-solid fa-envelope"></i></button>' +
+        '<button type="button" class="share-btn cp" data-share="copy" title="Copy link" aria-label="Copy link"><i class="fa-solid fa-link"></i></button>' +
+      '</div>' +
+      '<p class="share-hint">Tip: use <b>Copy Link</b> to share to GitHub, Notion, Discord, or anywhere else.</p>' +
+      '<button type="button" class="btn btn-outline btn-block" data-share="print">' +
+        '<i class="fa-solid fa-print"></i>Print / Save as PDF' +
+      '</button>' +
+    '</div>';
+}
+
+/* ------------------------------------------------------------------ *
  * File detail page
  * ------------------------------------------------------------------ */
 
@@ -1227,7 +1322,6 @@ function renderFileDetail(ctx) {
   const subscribed = ownerId !== viewerId && isSubscribed(user, ownerId);
   const isSelf = ownerId === viewerId;
 
-  // Big preview — different per kind.
   let preview;
   if (kind === 'image') {
     preview = '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(record.chapterName) + '">';
@@ -1238,7 +1332,6 @@ function renderFileDetail(ctx) {
   } else if (kind === 'pdf') {
     preview = '<iframe src="' + escapeHtml(src) + '" title="PDF preview"></iframe>';
   } else {
-    // Raw doc — show big A4 sheet with fallback.
     const thumbUrl = record.thumbnailUrl || buildA4ThumbnailUrl(record);
     const inner = thumbUrl
       ? '<img src="' + escapeHtml(thumbUrl) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">'
@@ -1272,14 +1365,12 @@ function renderFileDetail(ctx) {
         '</button></form>'
     : (isSelf ? '<a class="btn btn-outline btn-block" href="/users/' + encodeURIComponent(user.username) + '"><i class="fa-regular fa-user"></i>View my profile</a>' : '');
 
-  // Delete button on detail page (owner only).
   const deleteBtn = isSelf
     ? '<form method="POST" action="/files/' + encodeURIComponent(fid) + '/delete" class="inline-form" onsubmit="return confirm(\'Delete this file permanently? This cannot be undone.\');">' +
         '<button type="submit" class="btn btn-danger btn-xs"><i class="fa-solid fa-trash-can"></i>Delete</button>' +
       '</form>'
     : '';
 
-  // A4 thumbnail card for the sidebar (always shown, all file types).
   const sideThumbHtml =
     '<div class="a4-thumb-card">' +
       '<div class="a4-thumb-card-head"><i class="fa-solid fa-file-image"></i>A4 Preview</div>' +
@@ -1307,10 +1398,11 @@ function renderFileDetail(ctx) {
   const body = '' +
     renderTopNav(user, '') +
     '<div class="container">' +
-      '<div class="flex-between" style="margin-bottom:16px">' +
+      '<div class="flex-between back-row" style="margin-bottom:16px">' +
         '<a class="btn btn-ghost btn-xs" href="' + (record.visibility === 'public' ? '/gallery' : '/') + '"><i class="fa-solid fa-arrow-left"></i>Back</a>' +
-        '<div class="row">' +
+        '<div class="row action-row">' +
           deleteBtn +
+          '<button type="button" class="btn btn-outline btn-xs" data-share="print"><i class="fa-solid fa-print"></i>Print</button>' +
           '<a class="btn btn-primary btn-xs" href="/files/' + encodeURIComponent(fid) + '/download"><i class="fa-solid fa-download"></i>Download</a>' +
         '</div>' +
       '</div>' +
@@ -1344,6 +1436,8 @@ function renderFileDetail(ctx) {
         '<aside>' +
           sideThumbHtml +
           '<div style="height:14px"></div>' +
+          renderShareCard() +
+          '<div style="height:14px"></div>' +
           ratingBlock +
           '<div style="height:14px"></div>' +
           '<div class="uploader-card">' +
@@ -1364,6 +1458,7 @@ function renderFileDetail(ctx) {
       '</div>' +
     '</div>' +
 
+    // Rating widget script
     '<script>(function(){' +
       'var block=document.getElementById("rating-block");if(!block)return;' +
       'var fileId=block.getAttribute("data-file-id");' +
@@ -1381,6 +1476,43 @@ function renderFileDetail(ctx) {
         '.then(function(d){paintInput(v);starsEl.innerHTML=paintStars(d.average);avgEl.textContent=d.average.toFixed(1);cntEl.textContent=d.count;hint.textContent="You rated "+v+" star"+(v>1?"s":"")+".";})' +
         '.catch(function(){hint.textContent="Could not save your rating. Please try again.";})' +
         '.then(function(){setBusy(false);});' +
+      '});' +
+    '})();</script>' +
+
+    // Share & print script
+    '<script>(function(){' +
+      'var buttons=document.querySelectorAll("[data-share]");if(!buttons.length)return;' +
+      'var pageUrl=window.location.href;' +
+      'var pageTitle=document.title;' +
+      'var shareText=pageTitle+" — shared from Zinc Drive";' +
+      'function copyFallback(text){' +
+        'var ta=document.createElement("textarea");ta.value=text;ta.setAttribute("readonly","");ta.style.position="absolute";ta.style.left="-9999px";document.body.appendChild(ta);ta.select();' +
+        'try{document.execCommand("copy");}catch(e){}' +
+        'document.body.removeChild(ta);' +
+      '}' +
+      'buttons.forEach(function(btn){' +
+        'btn.addEventListener("click",function(e){' +
+          'e.preventDefault();' +
+          'var type=btn.getAttribute("data-share");' +
+          'var url="";' +
+          'switch(type){' +
+            'case "whatsapp":url="https://wa.me/?text="+encodeURIComponent(shareText+" "+pageUrl);break;' +
+            'case "facebook":url="https://www.facebook.com/sharer/sharer.php?u="+encodeURIComponent(pageUrl);break;' +
+            'case "twitter":url="https://twitter.com/intent/tweet?text="+encodeURIComponent(shareText)+"&url="+encodeURIComponent(pageUrl);break;' +
+            'case "linkedin":url="https://www.linkedin.com/sharing/share-offsite/?url="+encodeURIComponent(pageUrl);break;' +
+            'case "telegram":url="https://t.me/share/url?url="+encodeURIComponent(pageUrl)+"&text="+encodeURIComponent(shareText);break;' +
+            'case "reddit":url="https://www.reddit.com/submit?url="+encodeURIComponent(pageUrl)+"&title="+encodeURIComponent(pageTitle);break;' +
+            'case "email":url="mailto:?subject="+encodeURIComponent(pageTitle)+"&body="+encodeURIComponent("Check this out on Zinc Drive:\\n\\n"+pageUrl);break;' +
+            'case "copy":' +
+              'var original=btn.innerHTML;' +
+              'var done=function(){btn.classList.add("copied");btn.innerHTML=\'<i class="fa-solid fa-check"></i>\';setTimeout(function(){btn.classList.remove("copied");btn.innerHTML=original;},1500);};' +
+              'if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(pageUrl).then(done).catch(function(){copyFallback(pageUrl);done();});}' +
+              'else{copyFallback(pageUrl);done();}' +
+              'return;' +
+            'case "print":window.print();return;' +
+          '}' +
+          'if(url)window.open(url,"_blank","noopener,noreferrer,width=640,height=640");' +
+        '});' +
       '});' +
     '})();</script>';
 
@@ -1456,7 +1588,6 @@ const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
-/* ---- Security headers (Helmet) ---- */
 app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
@@ -1788,7 +1919,6 @@ app.post('/upload', requireAuth, uploadSingle, async (req, res, next) => {
 
     const result = await uploadBufferToCloudinary(req.file.buffer, req.file.originalname);
 
-    // Precompute the A4 thumbnail URL for supported resource types.
     const pseudoRecord = {
       mimeType: req.file.mimetype || 'application/octet-stream',
       originalName: normalizeOriginalName(req.file.originalname),
@@ -1881,10 +2011,6 @@ app.get('/files/:id/download', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * Delete a file — owner only.
- * Removes the asset (and its derived thumbnails) from Cloudinary, then the DB record.
- */
 app.post('/files/:id/delete', requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -1900,14 +2026,11 @@ app.post('/files/:id/delete', requireAuth, async (req, res, next) => {
       return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You can only delete your own files.'));
     }
 
-    // 1. Delete from Cloudinary (best-effort — file may already be gone).
     const destroyResult = await deleteFromCloudinary(record.storedName, record.resourceType);
     if (!destroyResult.ok) {
       console.warn('[zinc-drive] Cloudinary delete skipped/failed for', record.storedName, '-', destroyResult.error);
-      // We still remove the DB record so the app doesn't show a broken entry.
     }
 
-    // 2. Remove from MongoDB.
     await File.deleteOne({ _id: record._id });
 
     return res.redirect('/?deleted=success');
