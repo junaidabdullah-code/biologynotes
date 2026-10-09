@@ -1,13 +1,13 @@
 'use strict';
 
 /**
- * Zinc Drive — production single-file Node.js application.
+ * BiologyNotes — production single-file Node.js application.
  * Stack: Express · express-session · connect-mongo · Multer · Mongoose · dotenv · Helmet · Cloudinary
  * Typography: Playfair Display · Merriweather · Poppins
  * Icons: Font Awesome 6
  * Storage: Cloudinary (works on Render free tier)
  * Thumbnails: A4 aspect-ratio (210:297) generated via Cloudinary transformations
- * Features: auth, uploads, ratings, subscriptions, delete, share, print
+ * Features: auth, uploads, ratings, subscriptions, delete, share
  *
  * Run with: node server.js
  */
@@ -23,9 +23,9 @@ try {
   if (typeof dns.setDefaultResultOrder === 'function') {
     dns.setDefaultResultOrder('ipv4first');
   }
-  console.log('[zinc-drive] DNS resolvers set to 8.8.8.8 / 8.8.4.4 / 1.1.1.1');
+  console.log('[biologynotes] DNS resolvers set to 8.8.8.8 / 8.8.4.4 / 1.1.1.1');
 } catch (e) {
-  console.warn('[zinc-drive] Could not override DNS servers:', e.message);
+  console.warn('[biologynotes] Could not override DNS servers:', e.message);
 }
 
 const express = require('express');
@@ -55,7 +55,7 @@ let MongoStore;
     try {
       const v3 = mod(session);
       MongoStore = { create(opts) { return new v3(opts); } };
-      console.warn('[zinc-drive] Legacy connect-mongo v3 detected — using compatibility shim.');
+      console.warn('[biologynotes] Legacy connect-mongo v3 detected — using compatibility shim.');
       return;
     } catch (e) { /* fall through */ }
   }
@@ -71,7 +71,7 @@ let MongoStore;
  * ------------------------------------------------------------------ */
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
-const SESSION_SECRET = process.env.SESSION_SECRET || 'zinc-drive-insecure-dev-secret-change-me';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'biologynotes-insecure-dev-secret-change-me';
 const MONGO_URI = process.env.MONGO_URI;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PROD = NODE_ENV === 'production';
@@ -322,7 +322,7 @@ function uploadBufferToCloudinary(buffer, originalName) {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
-        folder: 'zinc-drive',
+        folder: 'biologynotes',
         resource_type: 'auto',
         use_filename: true,
         unique_filename: true,
@@ -343,7 +343,7 @@ function deleteFromCloudinary(publicId, resourceType) {
       { resource_type: type, invalidate: true },
       (err, result) => {
         if (err) {
-          console.warn('[zinc-drive] Cloudinary destroy error:', err.message);
+          console.warn('[biologynotes] Cloudinary destroy error:', err.message);
           return resolve({ ok: false, error: err.message });
         }
         resolve({ ok: true, result: result });
@@ -392,7 +392,7 @@ function buildA4ThumbnailUrl(record) {
       });
     }
   } catch (err) {
-    console.warn('[zinc-drive] thumbnail build failed:', err.message);
+    console.warn('[biologynotes] thumbnail build failed:', err.message);
   }
 
   return '';
@@ -650,21 +650,47 @@ p{margin:0}
 .progress.on{display:block}
 .progress-bar{height:100%;width:0;background:#18181b;transition:width .25s ease}
 
+/* ------------------------------------------------------------------ *
+ * DETAIL PAGE
+ * ------------------------------------------------------------------ */
 .detail-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,1fr);gap:22px;align-items:start}
 @media (max-width:880px){.detail-grid{grid-template-columns:1fr}}
+
+/* Base preview (dark, for media) */
 .detail-preview{background:#0a0a0a;border:1px solid #18181b;min-height:320px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
 .detail-preview img{max-width:100%;max-height:620px;display:block}
 .detail-preview video{max-width:100%;max-height:620px;display:block;background:#000}
 .detail-preview audio{width:100%;padding:28px}
-.detail-preview iframe{width:100%;height:640px;border:0;background:#fff}
 .detail-preview .placeholder{color:#a1a1aa;display:flex;flex-direction:column;align-items:center;gap:14px;padding:70px 20px;text-align:center}
 .detail-preview .placeholder i{font-size:64px;color:#52525b}
 .detail-preview .placeholder .kind-label{font-size:11px;letter-spacing:.16em;font-weight:600;color:#fafafa;font-family:'Poppins',sans-serif}
 
-.detail-a4-wrap{background:#0a0a0a;padding:26px;display:flex;align-items:center;justify-content:center;min-height:420px}
+/* Light preview for documents (pdf, docx, txt, etc.) */
+.detail-preview-light{
+  background: linear-gradient(135deg,#fafafa 0%,#f0f0f1 100%);
+  border-color:#e4e4e7;
+  padding:26px;
+  min-height:460px;
+}
+.detail-preview-light::before{
+  content:'';position:absolute;inset:0;
+  background-image:
+    linear-gradient(rgba(228,228,231,.55) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(228,228,231,.55) 1px,transparent 1px);
+  background-size:22px 22px;opacity:.5;pointer-events:none;
+}
+.detail-preview-light iframe{
+  position:relative;z-index:1;
+  width:100%;height:640px;border:1px solid #d4d4d8;background:#fff;
+}
+.detail-preview-light .detail-a4-wrap{position:relative;z-index:1;padding:0;min-height:auto;background:transparent;border:0;display:flex;align-items:center;justify-content:center}
+
+/* A4 sheet on detail page */
+.detail-a4-wrap{display:flex;align-items:center;justify-content:center;min-height:420px;padding:0}
 .detail-a4{
   aspect-ratio:210/297;width:100%;max-width:420px;background:#fff;border:1px solid #d4d4d8;
-  box-shadow:0 8px 30px rgba(0,0,0,.4);position:relative;overflow:hidden;
+  box-shadow:0 8px 30px rgba(24,24,27,.18),0 2px 6px rgba(24,24,27,.08);
+  position:relative;overflow:hidden;
 }
 .detail-a4 .a4-fallback i{font-size:64px}
 .detail-a4 .a4-fallback .ext-badge{font-size:13px;padding:7px 14px}
@@ -701,7 +727,7 @@ p{margin:0}
   max-width:230px;
 }
 
-/* Share & Print card */
+/* Share card */
 .share-card{background:#fff;border:1px solid #e4e4e7;padding:18px;display:flex;flex-direction:column;gap:14px}
 .share-card-head{
   font-family:'Poppins',sans-serif;font-size:12.5px;font-weight:600;
@@ -792,73 +818,8 @@ p{margin:0}
   .dropzone-icon{width:56px;height:56px;font-size:22px}
   .dropzone-title{font-size:17px}
   .preview{height:240px;padding:14px}
-}
-
-/* ------------------------------------------------------------------ *
- * PRINT STYLES
- * When the user clicks "Print / Save as PDF", hide UI chrome and show
- * only the file title, preview, and metadata in a clean page layout.
- * ------------------------------------------------------------------ */
-@media print {
-  /* Hide global chrome */
-  .topnav, .nav-links, .nav-right, .banner, .actions, .row.actions,
-  .back-row, .action-row, .share-card, .a4-thumb-card, .uploader-card,
-  .rating-block, .alert, .btn, .chips, .toolbar, .section-head,
-  .detail-grid aside, .file-foot, .empty, .foot-note { display: none !important; }
-
-  /* Page setup */
-  @page { margin: 14mm 12mm; size: A4; }
-
-  html, body { background: #fff !important; color: #000 !important; font-size: 11pt; line-height: 1.5; }
-  body { font-family: 'Merriweather', Georgia, 'Times New Roman', serif; }
-
-  .container { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
-
-  /* Flatten the grid — main column only */
-  .detail-grid { display: block !important; grid-template-columns: 1fr !important; gap: 0 !important; }
-
-  /* Preview — no black background, no border, no min-height */
-  .detail-preview {
-    background: #fff !important; border: 0 !important;
-    min-height: 0 !important; padding: 0 !important; margin-bottom: 16pt;
-    display: block !important;
-  }
-  .detail-preview img, .detail-preview video { max-width: 100% !important; max-height: 130mm !important; }
-  .detail-preview iframe { width: 100% !important; height: 160mm !important; border: 1px solid #ccc !important; }
-
-  .detail-a4-wrap { background: #fff !important; padding: 0 !important; border: 0 !important; min-height: 0 !important; }
-  .detail-a4 { box-shadow: none !important; border: 1px solid #ccc !important; max-width: 130mm !important; margin: 0 auto 12pt !important; }
-
-  /* Cards — flatten */
-  .card { box-shadow: none !important; border: 0 !important; padding: 0 !important; background: #fff !important; }
-
-  /* Headings */
-  h1 { font-size: 20pt !important; color: #000 !important; margin: 0 0 4pt !important; }
-  h2 { font-size: 15pt !important; color: #000 !important; }
-  h3 { font-size: 12pt !important; color: #000 !important; }
-  p, .sub { color: #333 !important; font-size: 10.5pt !important; }
-
-  /* Metadata table */
-  .meta-grid {
-    display: grid !important; grid-template-columns: 1fr 1fr !important;
-    border-top: 1px solid #ccc !important; margin-top: 16pt !important;
-    gap: 0 !important;
-  }
-  .meta-item { border-bottom: 1px solid #eee !important; padding: 8pt 0 !important; }
-  .meta-item:nth-child(odd) { padding-right: 14pt !important; }
-  .meta-item .k { color: #666 !important; font-size: 8pt !important; }
-  .meta-item .v { color: #000 !important; font-size: 10pt !important; }
-
-  /* Badges */
-  .badge { border: 1px solid #ccc !important; background: #f4f4f4 !important; color: #333 !important; }
-  .badge-dark { background: #333 !important; color: #fff !important; border-color: #333 !important; }
-
-  /* Links — plain */
-  a { color: #000 !important; text-decoration: none !important; }
-  a[href]::after { content: ''; } /* avoid printing full URLs */
-
-  /* Avoid awkward breaks */
-  h1, h2, h3, .meta-grid, .detail-preview { page-break-inside: avoid; }
+  .detail-preview-light{padding:16px}
+  .detail-preview-light iframe{height:420px}
 }
 `;
 
@@ -882,7 +843,7 @@ function layout(title, body) {
 }
 
 function brandMark() {
-  return '<div class="brand"><a href="/"><span class="brand-mark"><i class="fa-solid fa-layer-group"></i></span><span>Zinc Drive</span></a></div>';
+  return '<div class="brand"><a href="/"><span class="brand-mark"><i class="fa-solid fa-dna"></i></span><span>BiologyNotes</span></a></div>';
 }
 
 function renderTopNav(user, active) {
@@ -919,7 +880,7 @@ function renderRegister(ctx) {
     renderTopNav(null, 'register') +
     '<div class="auth-wrap"><div class="auth-card">' +
       '<div class="auth-brand">' +
-        '<div class="brand-mark" style="width:48px;height:48px"><i class="fa-solid fa-layer-group" style="font-size:20px"></i></div>' +
+        '<div class="brand-mark" style="width:48px;height:48px"><i class="fa-solid fa-dna" style="font-size:22px"></i></div>' +
         '<h1 style="font-size:26px;margin:0">Create your account</h1>' +
         '<p class="sub" style="margin:0;text-align:center">Register to start uploading, rating, and subscribing.</p>' +
       '</div>' +
@@ -939,7 +900,7 @@ function renderRegister(ctx) {
       '<p class="foot-note">Already registered? <a href="/login">Sign in</a></p>' +
     '</div></div>' +
     '<script>(function(){var f=document.getElementById("register-form");var b=document.getElementById("client-error");if(!f||!b)return;f.addEventListener("submit",function(e){var p=f.querySelector("[name=password]").value||"";var s=b.querySelector("span");if(p.length<6){e.preventDefault();s.textContent="Password must be at least 6 characters long.";b.style.display="flex";}else{b.style.display="none";}});})();</script>';
-  return layout('Register · Zinc Drive', body);
+  return layout('Register · BiologyNotes', body);
 }
 
 function renderLogin(ctx) {
@@ -948,7 +909,7 @@ function renderLogin(ctx) {
     renderTopNav(null, 'login') +
     '<div class="auth-wrap"><div class="auth-card">' +
       '<div class="auth-brand">' +
-        '<div class="brand-mark" style="width:48px;height:48px"><i class="fa-solid fa-layer-group" style="font-size:20px"></i></div>' +
+        '<div class="brand-mark" style="width:48px;height:48px"><i class="fa-solid fa-dna" style="font-size:22px"></i></div>' +
         '<h1 style="font-size:26px;margin:0">Welcome back</h1>' +
         '<p class="sub" style="margin:0;text-align:center">Sign in to access your dashboard and files.</p>' +
       '</div>' +
@@ -962,7 +923,7 @@ function renderLogin(ctx) {
       '</form>' +
       '<p class="foot-note">Need an account? <a href="/register">Register</a></p>' +
     '</div></div>';
-  return layout('Login · Zinc Drive', body);
+  return layout('Login · BiologyNotes', body);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1127,7 +1088,7 @@ function renderListing(ctx) {
       '</div>' +
       main +
     '</div>';
-  return layout('Dashboard · Zinc Drive', body);
+  return layout('Dashboard · BiologyNotes', body);
 }
 
 function renderHome(ctx) {
@@ -1149,7 +1110,7 @@ function renderGallery(ctx) {
   const { user, records, filter = 'public', sort = 'recent', query = '' } = ctx;
   return renderListing({
     viewer: user, title: 'Public Gallery',
-    subtitle: 'Browse every public file shared across Zinc Drive.',
+    subtitle: 'Browse every public file shared across BiologyNotes.',
     records, activeNav: 'gallery', filter, sort, query, showFilters: false
   });
 }
@@ -1277,17 +1238,17 @@ function renderUpload(ctx) {
     '})();' +
     '</script>';
 
-  return layout('Upload · Zinc Drive', body);
+  return layout('Upload · BiologyNotes', body);
 }
 
 /* ------------------------------------------------------------------ *
- * Share & Print card
+ * Share card (no print button)
  * ------------------------------------------------------------------ */
 
 function renderShareCard() {
   return '' +
     '<div class="share-card">' +
-      '<div class="share-card-head"><i class="fa-solid fa-share-nodes"></i>Share &amp; Print</div>' +
+      '<div class="share-card-head"><i class="fa-solid fa-share-nodes"></i>Share this file</div>' +
       '<div class="share-buttons">' +
         '<button type="button" class="share-btn wa" data-share="whatsapp" title="Share on WhatsApp" aria-label="Share on WhatsApp"><i class="fa-brands fa-whatsapp"></i></button>' +
         '<button type="button" class="share-btn fb" data-share="facebook" title="Share on Facebook" aria-label="Share on Facebook"><i class="fa-brands fa-facebook-f"></i></button>' +
@@ -1299,9 +1260,6 @@ function renderShareCard() {
         '<button type="button" class="share-btn cp" data-share="copy" title="Copy link" aria-label="Copy link"><i class="fa-solid fa-link"></i></button>' +
       '</div>' +
       '<p class="share-hint">Tip: use <b>Copy Link</b> to share to GitHub, Notion, Discord, or anywhere else.</p>' +
-      '<button type="button" class="btn btn-outline btn-block" data-share="print">' +
-        '<i class="fa-solid fa-print"></i>Print / Save as PDF' +
-      '</button>' +
     '</div>';
 }
 
@@ -1322,7 +1280,10 @@ function renderFileDetail(ctx) {
   const subscribed = ownerId !== viewerId && isSubscribed(user, ownerId);
   const isSelf = ownerId === viewerId;
 
+  // Build preview + choose container class.
   let preview;
+  let previewExtraClass = '';
+
   if (kind === 'image') {
     preview = '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(record.chapterName) + '">';
   } else if (kind === 'video') {
@@ -1330,8 +1291,11 @@ function renderFileDetail(ctx) {
   } else if (kind === 'audio') {
     preview = '<audio src="' + escapeHtml(src) + '" controls preload="metadata"></audio>';
   } else if (kind === 'pdf') {
+    previewExtraClass = ' detail-preview-light';
     preview = '<iframe src="' + escapeHtml(src) + '" title="PDF preview"></iframe>';
   } else {
+    // Raw docs / text / unknown — light grid + centered A4 sheet.
+    previewExtraClass = ' detail-preview-light';
     const thumbUrl = record.thumbnailUrl || buildA4ThumbnailUrl(record);
     const inner = thumbUrl
       ? '<img src="' + escapeHtml(thumbUrl) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">'
@@ -1398,11 +1362,10 @@ function renderFileDetail(ctx) {
   const body = '' +
     renderTopNav(user, '') +
     '<div class="container">' +
-      '<div class="flex-between back-row" style="margin-bottom:16px">' +
+      '<div class="flex-between" style="margin-bottom:16px">' +
         '<a class="btn btn-ghost btn-xs" href="' + (record.visibility === 'public' ? '/gallery' : '/') + '"><i class="fa-solid fa-arrow-left"></i>Back</a>' +
-        '<div class="row action-row">' +
+        '<div class="row">' +
           deleteBtn +
-          '<button type="button" class="btn btn-outline btn-xs" data-share="print"><i class="fa-solid fa-print"></i>Print</button>' +
           '<a class="btn btn-primary btn-xs" href="/files/' + encodeURIComponent(fid) + '/download"><i class="fa-solid fa-download"></i>Download</a>' +
         '</div>' +
       '</div>' +
@@ -1412,7 +1375,7 @@ function renderFileDetail(ctx) {
 
       '<div class="detail-grid">' +
         '<div>' +
-          '<div class="detail-preview">' + preview + '</div>' +
+          '<div class="detail-preview' + previewExtraClass + '">' + preview + '</div>' +
           '<div class="card" style="margin-top:16px">' +
             '<div class="file-top" style="margin-bottom:10px">' +
               '<span class="badge badge-dark"><i class="fa-solid fa-bookmark"></i>Chapter ' + escapeHtml(record.chapterNo) + '</span>' +
@@ -1479,12 +1442,12 @@ function renderFileDetail(ctx) {
       '});' +
     '})();</script>' +
 
-    // Share & print script
+    // Share script (print removed)
     '<script>(function(){' +
       'var buttons=document.querySelectorAll("[data-share]");if(!buttons.length)return;' +
       'var pageUrl=window.location.href;' +
       'var pageTitle=document.title;' +
-      'var shareText=pageTitle+" — shared from Zinc Drive";' +
+      'var shareText=pageTitle+" — shared from BiologyNotes";' +
       'function copyFallback(text){' +
         'var ta=document.createElement("textarea");ta.value=text;ta.setAttribute("readonly","");ta.style.position="absolute";ta.style.left="-9999px";document.body.appendChild(ta);ta.select();' +
         'try{document.execCommand("copy");}catch(e){}' +
@@ -1502,21 +1465,20 @@ function renderFileDetail(ctx) {
             'case "linkedin":url="https://www.linkedin.com/sharing/share-offsite/?url="+encodeURIComponent(pageUrl);break;' +
             'case "telegram":url="https://t.me/share/url?url="+encodeURIComponent(pageUrl)+"&text="+encodeURIComponent(shareText);break;' +
             'case "reddit":url="https://www.reddit.com/submit?url="+encodeURIComponent(pageUrl)+"&title="+encodeURIComponent(pageTitle);break;' +
-            'case "email":url="mailto:?subject="+encodeURIComponent(pageTitle)+"&body="+encodeURIComponent("Check this out on Zinc Drive:\\n\\n"+pageUrl);break;' +
+            'case "email":url="mailto:?subject="+encodeURIComponent(pageTitle)+"&body="+encodeURIComponent("Check this out on BiologyNotes:\\n\\n"+pageUrl);break;' +
             'case "copy":' +
               'var original=btn.innerHTML;' +
               'var done=function(){btn.classList.add("copied");btn.innerHTML=\'<i class="fa-solid fa-check"></i>\';setTimeout(function(){btn.classList.remove("copied");btn.innerHTML=original;},1500);};' +
               'if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(pageUrl).then(done).catch(function(){copyFallback(pageUrl);done();});}' +
               'else{copyFallback(pageUrl);done();}' +
               'return;' +
-            'case "print":window.print();return;' +
           '}' +
           'if(url)window.open(url,"_blank","noopener,noreferrer,width=640,height=640");' +
         '});' +
       '});' +
     '})();</script>';
 
-  return layout(record.chapterName + ' · Zinc Drive', body);
+  return layout(record.chapterName + ' · BiologyNotes', body);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1562,7 +1524,7 @@ function renderUserProfile(ctx) {
       '</div>' +
       main +
     '</div>';
-  return layout(profileUser.name + ' · Zinc Drive', body);
+  return layout(profileUser.name + ' · BiologyNotes', body);
 }
 
 function renderErrorPage(status, title, message) {
@@ -1621,7 +1583,7 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 
 app.use(session({
-  name: 'zinc.sid',
+  name: 'bn.sid',
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
@@ -1825,7 +1787,7 @@ app.post('/register', async (req, res, next) => {
 
     req.session.registered = true;
     req.session.save((err) => {
-      if (err) console.error('[zinc-drive] register save error:', err);
+      if (err) console.error('[biologynotes] register save error:', err);
       return res.redirect('/login');
     });
   } catch (err) {
@@ -1867,7 +1829,7 @@ app.post('/login', async (req, res, next) => {
 
     req.session.save((err) => {
       if (err) {
-        console.error('[zinc-drive] login save error:', err);
+        console.error('[biologynotes] login save error:', err);
         return res.status(500).send(renderLogin({
           error: 'Something went wrong while signing you in. Please try again.',
           values: { username }
@@ -1881,8 +1843,8 @@ app.post('/login', async (req, res, next) => {
 app.get('/logout', (req, res) => {
   if (!req.session) return res.redirect('/login');
   req.session.destroy((err) => {
-    if (err) console.error('[zinc-drive] logout destroy error:', err);
-    res.clearCookie('zinc.sid');
+    if (err) console.error('[biologynotes] logout destroy error:', err);
+    res.clearCookie('bn.sid');
     res.redirect('/login');
   });
 });
@@ -1941,7 +1903,7 @@ app.post('/upload', requireAuth, uploadSingle, async (req, res, next) => {
 
     res.redirect('/?upload=success');
   } catch (err) {
-    console.error('[zinc-drive] Cloudinary upload failed:', err);
+    console.error('[biologynotes] Cloudinary upload failed:', err);
     next(err);
   }
 });
@@ -2028,7 +1990,7 @@ app.post('/files/:id/delete', requireAuth, async (req, res, next) => {
 
     const destroyResult = await deleteFromCloudinary(record.storedName, record.resourceType);
     if (!destroyResult.ok) {
-      console.warn('[zinc-drive] Cloudinary delete skipped/failed for', record.storedName, '-', destroyResult.error);
+      console.warn('[biologynotes] Cloudinary delete skipped/failed for', record.storedName, '-', destroyResult.error);
     }
 
     await File.deleteOne({ _id: record._id });
@@ -2138,7 +2100,7 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
-  console.error('[zinc-drive] Unhandled error:', err);
+  console.error('[biologynotes] Unhandled error:', err);
   if (res.headersSent) return;
   res.status(500).send(renderErrorPage(500, 'Server error', 'Something went wrong on our side.'));
 });
@@ -2157,18 +2119,18 @@ async function start() {
       maxPoolSize: 20,
       autoIndex: !IS_PROD
     });
-    console.log('[zinc-drive] Connected to MongoDB');
+    console.log('[biologynotes] Connected to MongoDB');
 
     const server = app.listen(PORT, () => {
-      console.log('[zinc-drive] Running at http://localhost:' + PORT);
-      console.log('[zinc-drive] Environment: ' + NODE_ENV);
-      console.log('[zinc-drive] Storage: Cloudinary (' + CLOUDINARY_CLOUD_NAME + ')');
-      console.log('[zinc-drive] A4 thumbnails: ' + A4_THUMB_W + 'x' + A4_THUMB_H);
-      console.log('[zinc-drive] Max upload size: ' + formatBytes(MAX_FILE_SIZE));
+      console.log('[biologynotes] Running at http://localhost:' + PORT);
+      console.log('[biologynotes] Environment: ' + NODE_ENV);
+      console.log('[biologynotes] Storage: Cloudinary (' + CLOUDINARY_CLOUD_NAME + ')');
+      console.log('[biologynotes] A4 thumbnails: ' + A4_THUMB_W + 'x' + A4_THUMB_H);
+      console.log('[biologynotes] Max upload size: ' + formatBytes(MAX_FILE_SIZE));
     });
 
     const shutdown = async (signal) => {
-      console.log('\n[zinc-drive] ' + signal + ' received. Shutting down...');
+      console.log('\n[biologynotes] ' + signal + ' received. Shutting down...');
       server.close(async () => {
         try { await mongoose.connection.close(); } catch (e) {}
         process.exit(0);
@@ -2178,7 +2140,7 @@ async function start() {
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
   } catch (err) {
-    console.error('\n[zinc-drive] Failed to connect to MongoDB.\n');
+    console.error('\n[biologynotes] Failed to connect to MongoDB.\n');
     console.error('Error:', err.message);
     console.error('\nCheck that (1) your Atlas cluster is not paused,');
     console.error('(2) your IP is whitelisted in Network Access,');
