@@ -5,7 +5,8 @@
  * Stack: Express · express-session · connect-mongo · Multer · Mongoose · dotenv · Helmet · Cloudinary
  * Typography: Playfair Display · Merriweather · Poppins
  * Icons: Font Awesome 6
- * Storage: Cloudinary (works on Render free tier — no disk needed)
+ * Storage: Cloudinary (works on Render free tier)
+ * Thumbnails: A4 aspect-ratio (210:297) generated via Cloudinary transformations
  *
  * Run with: node server.js
  */
@@ -13,8 +14,7 @@
 require('dotenv').config();
 
 /* ------------------------------------------------------------------ *
- * DNS FIX — Force public resolvers so mongodb+srv:// SRV lookups work
- * on Windows ISPs that block or refuse SRV queries on local DNS.
+ * DNS FIX — public resolvers for mongodb+srv:// on restrictive ISPs
  * ------------------------------------------------------------------ */
 const dns = require('dns');
 try {
@@ -96,11 +96,14 @@ cloudinary.config({
   secure: true
 });
 
-// Kept only for legacy previews; no disk writes now that we use Cloudinary.
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+
+// A4 thumbnail dimensions (210mm × 297mm → ~0.707 ratio).
+const A4_THUMB_W = 620;
+const A4_THUMB_H = 877;
 
 /* ------------------------------------------------------------------ *
  * Mongoose schemas
@@ -138,8 +141,10 @@ const fileSchema = new mongoose.Schema(
     description: { type: String, default: '', maxlength: 2000 },
     visibility: { type: String, enum: ['public', 'private'], default: 'public', index: true },
     originalName: { type: String, required: true, maxlength: 300 },
-    storedName: { type: String, required: true },   // Cloudinary public_id
-    fileUrl: { type: String, required: true },      // Cloudinary secure_url
+    storedName: { type: String, required: true },     // Cloudinary public_id
+    fileUrl: { type: String, required: true },        // Cloudinary secure_url
+    thumbnailUrl: { type: String, default: '' },      // Cloudinary A4 thumb URL (may be '')
+    thumbnailId: { type: String, default: '' },       // Cloudinary public_id of generated thumb (optional)
     size: { type: Number, required: true, min: 0 },
     mimeType: { type: String, default: 'application/octet-stream' },
     downloads: { type: Number, default: 0 },
@@ -302,10 +307,17 @@ function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(id);
 }
 
+function fileExtUpper(name) {
+  const parts = String(name || '').split('.');
+  if (parts.length < 2) return 'FILE';
+  return (parts[parts.length - 1] || 'FILE').toUpperCase().slice(0, 5);
+}
+
 /* ------------------------------------------------------------------ *
- * Cloudinary upload helper
+ * Cloudinary helpers
  * ------------------------------------------------------------------ */
 
+/** Upload an in-memory buffer to Cloudinary. */
 function uploadBufferToCloudinary(buffer, originalName) {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -322,11 +334,86 @@ function uploadBufferToCloudinary(buffer, originalName) {
   });
 }
 
-function buildCloudinaryDownloadUrl(fileUrl, originalName) {
+/**
+ * Builds an A4-shaped thumbnail URL (620×877) via Cloudinary transformations.
+ *
+ * Returns '' when no thumbnail is possible (audio, raw docs like .docx/.zip/.txt).
+ * Callers should render the A4 placeholder sheet when this returns ''.
+ */
+function buildA4ThumbnailUrl(record) {
+  const kind = fileKind(record.mimeType, record.originalName);
+  const pid = record.storedName;
+  if (!pid) return '';
+
+  try {
+    if (kind === 'image') {
+      return cloudinary.url(pid, {
+        resource_type: 'image',
+        secure: true,
+        transformation: [
+          { width: A4_THUMB_W, height: A4_THUMB_H, crop: 'fill', gravity: 'auto' },
+          { quality: 'auto', fetch_format: 'auto' }
+        ]
+      });
+    }
+    if (kind === 'pdf') {
+      return cloudinary.url(pid, {
+        resource_type: 'image',
+        secure: true,
+        format: 'jpg',
+        page: 1,
+        transformation: [
+          { width: A4_THUMB_W, height: A4_THUMB_H, crop: 'fill' },
+          { quality: 'auto' }
+        ]
+      });
+    }
+    if (kind === 'video') {
+      return cloudinary.url(pid, {
+        resource_type: 'video',
+        secure: true,
+        format: 'jpg',
+        transformation: [
+          { width: A4_THUMB_W, height: A4_THUMB_H, crop: 'fill', start_offset: '0' },
+          { quality: 'auto' }
+        ]
+      });
+    }
+  } catch (err) {
+    console.warn('[zinc-drive] thumbnail build failed:', err.message);
+  }
+
+  return '';
+}
+
+/**
+ * Builds a Cloudinary URL that forces a download.
+ *
+ * Rules:
+ *  - Images / videos / PDFs: use `fl_attachment:<name>` (transformable resource types).
+ *  - Raw files (.docx/.zip/.txt/...): cannot be transformed — Cloudinary already
+ *    serves them with Content-Disposition: attachment, so return the plain URL.
+ *  - The custom filename inside `fl_attachment:` only allows word chars,
+ *    hyphens, spaces, and `!`. Dots are NOT allowed (that was the "Invalid flag
+ *    in transformation: docx" bug).
+ */
+function buildCloudinaryDownloadUrl(fileUrl, originalName, mimeType) {
   if (!fileUrl) return fileUrl;
-  // Add fl_attachment flag so Cloudinary serves a download response.
-  const base = fileUrl.replace('/upload/', '/upload/fl_attachment:' + encodeURIComponent(originalName) + '/');
-  return base;
+
+  const kind = fileKind(mimeType, originalName);
+
+  // Raw + text files: return the CDN URL as-is.
+  if (kind === 'file' || kind === 'text') {
+    return fileUrl;
+  }
+
+  // Strip extension + sanitize the filename for the fl_attachment flag.
+  let baseName = String(originalName || 'download');
+  baseName = baseName.replace(/\.[^.]+$/, '');
+  baseName = baseName.replace(/[^a-zA-Z0-9_\- ]/g, '_');
+  baseName = baseName.slice(0, 60) || 'download';
+
+  return fileUrl.replace('/upload/', '/upload/fl_attachment:' + encodeURIComponent(baseName) + '/');
 }
 
 /* ------------------------------------------------------------------ *
@@ -447,17 +534,66 @@ p{margin:0}
 .file-card{background:#fff;border:1px solid #e4e4e7;display:flex;flex-direction:column;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
 .file-card:hover{border-color:#d4d4d8;box-shadow:0 4px 14px rgba(24,24,27,.08);transform:translateY(-2px)}
 
-.preview{position:relative;display:block;height:190px;background:#f4f4f5;border-bottom:1px solid #e4e4e7;overflow:hidden}
-.preview img{width:100%;height:100%;object-fit:cover;display:block}
-.preview video{width:100%;height:100%;object-fit:cover;display:block;background:#000}
-.preview .placeholder{width:100%;height:100%;display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:#71717a}
-.preview .placeholder i{font-size:44px;color:#a1a1aa}
-.preview .placeholder .kind-label{font-size:10.5px;letter-spacing:.16em;font-weight:600;color:#3f3f46;font-family:'Poppins',sans-serif}
-.preview .play-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.95);background:rgba(24,24,27,.22);pointer-events:none;transition:background-color .2s ease}
-.preview .play-overlay i{font-size:52px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
+/* ---------- A4 preview area ---------- */
+.preview{
+  position:relative;display:flex;align-items:center;justify-content:center;
+  height:280px;background:
+    linear-gradient(135deg,#f4f4f5 0%,#e8e8ea 100%);
+  border-bottom:1px solid #e4e4e7;overflow:hidden;padding:18px;
+}
+.preview::before{
+  content:'';position:absolute;inset:0;
+  background-image:
+    linear-gradient(rgba(228,228,231,.55) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(228,228,231,.55) 1px,transparent 1px);
+  background-size:22px 22px;
+  opacity:.35;pointer-events:none;
+}
+.a4-thumb{
+  position:relative;
+  aspect-ratio:210 / 297;
+  height:100%;
+  max-width:100%;
+  background:#fff;
+  border:1px solid #d4d4d8;
+  box-shadow:
+    0 4px 14px rgba(24,24,27,.14),
+    0 1px 3px rgba(24,24,27,.08);
+  overflow:hidden;
+  transition:transform .22s ease,box-shadow .22s ease;
+  z-index:1;
+}
+.file-card:hover .a4-thumb{transform:translateY(-3px) scale(1.015);box-shadow:0 10px 24px rgba(24,24,27,.18),0 2px 5px rgba(24,24,27,.10)}
+.a4-thumb img{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;
+  background:#fff;
+}
+.a4-fallback{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  padding:14px 12px;background:#fff;
+}
+.a4-fallback::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#18181b;
+}
+.a4-fallback i{font-size:38px;color:#a1a1aa}
+.a4-fallback .ext-badge{
+  font-family:'Poppins',sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;
+  color:#18181b;padding:5px 10px;background:#f4f4f5;border:1px solid #e4e4e7;
+}
+.a4-fallback .lines{width:78%;display:flex;flex-direction:column;gap:5px;margin-top:8px}
+.a4-fallback .lines span{height:2px;background:#e4e4e7;display:block}
+.a4-fallback .lines span:nth-child(1){width:100%}
+.a4-fallback .lines span:nth-child(2){width:88%}
+.a4-fallback .lines span:nth-child(3){width:94%}
+.a4-fallback .lines span:nth-child(4){width:62%}
+
+.preview .type-badge{position:absolute;top:12px;left:12px;background:rgba(24,24,27,.88);color:#fafafa;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px);z-index:2}
+.preview .vis-badge{position:absolute;top:12px;right:12px;background:rgba(255,255,255,.95);color:#18181b;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;border:1px solid #e4e4e7;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px);z-index:2}
+
+.preview .play-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.95);background:rgba(24,24,27,.22);pointer-events:none;transition:background-color .2s ease;z-index:1}
+.preview .play-overlay i{font-size:48px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
 .file-card:hover .play-overlay{background:rgba(24,24,27,.32)}
-.preview .type-badge{position:absolute;top:10px;left:10px;background:rgba(24,24,27,.88);color:#fafafa;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px)}
-.preview .vis-badge{position:absolute;top:10px;right:10px;background:rgba(255,255,255,.95);color:#18181b;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;border:1px solid #e4e4e7;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px)}
 
 .file-body{padding:15px;display:flex;flex-direction:column;gap:9px;flex:1}
 .file-top{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
@@ -525,6 +661,17 @@ p{margin:0}
 .detail-preview .placeholder i{font-size:64px;color:#52525b}
 .detail-preview .placeholder .kind-label{font-size:11px;letter-spacing:.16em;font-weight:600;color:#fafafa;font-family:'Poppins',sans-serif}
 
+/* Big A4 sheet on detail page (for raw docs / fallback) */
+.detail-a4-wrap{background:#0a0a0a;padding:26px;display:flex;align-items:center;justify-content:center;min-height:420px}
+.detail-a4{
+  aspect-ratio:210/297;width:100%;max-width:420px;background:#fff;border:1px solid #d4d4d8;
+  box-shadow:0 8px 30px rgba(0,0,0,.4);position:relative;overflow:hidden;
+}
+.detail-a4 .a4-fallback i{font-size:64px}
+.detail-a4 .a4-fallback .ext-badge{font-size:13px;padding:7px 14px}
+.detail-a4 .a4-fallback .lines{width:70%;gap:7px}
+.detail-a4 .a4-fallback .lines span{height:2px}
+
 .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:18px;border-top:1px solid #f4f4f5}
 .meta-item{display:flex;flex-direction:column;gap:3px;border-bottom:1px solid #f4f4f5;padding:12px 0}
 .meta-item:nth-child(odd){padding-right:14px}
@@ -586,6 +733,7 @@ p{margin:0}
   .dropzone{padding:32px 16px}
   .dropzone-icon{width:56px;height:56px;font-size:22px}
   .dropzone-title{font-size:17px}
+  .preview{height:240px;padding:14px}
 }
 `;
 
@@ -693,32 +841,43 @@ function renderLogin(ctx) {
 }
 
 /* ------------------------------------------------------------------ *
- * File card
+ * Preview / thumbnail renderer (A4)
  * ------------------------------------------------------------------ */
+
+/** Returns just the inner A4 sheet markup (fallback + optional <img>). */
+function renderA4ThumbInner(record, kind) {
+  const ext = fileExtUpper(record.originalName);
+  const fallback =
+    '<div class="a4-fallback">' +
+      '<i class="' + kindIconClass(kind) + '"></i>' +
+      '<div class="ext-badge">' + escapeHtml(ext) + '</div>' +
+      '<div class="lines"><span></span><span></span><span></span><span></span></div>' +
+    '</div>';
+
+  const thumbUrl = record.thumbnailUrl || buildA4ThumbnailUrl(record);
+  const img = thumbUrl
+    ? '<img src="' + escapeHtml(thumbUrl) + '" alt="' + escapeHtml(record.chapterName) + '" loading="lazy" onerror="this.style.display=\'none\'">'
+    : '';
+
+  // Fallback sits behind; img overlays it. If the img fails, it hides itself.
+  return fallback + img;
+}
 
 function renderPreview(record) {
   const kind = fileKind(record.mimeType, record.originalName);
-  const src = record.fileUrl;                                   // Cloudinary CDN URL
   const typeBadge = '<span class="type-badge">' + kindLabel(kind) + '</span>';
   const visBadge = '<span class="vis-badge">' + (record.visibility === 'public' ? 'PUBLIC' : 'PRIVATE') + '</span>';
   const href = '/files/' + encodeURIComponent(String(record._id));
 
-  if (kind === 'image') {
-    return '<a class="preview" href="' + href + '">' +
-      '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(record.chapterName) + '" loading="lazy">' +
-      typeBadge + visBadge + '</a>';
-  }
-  if (kind === 'video') {
-    return '<a class="preview" href="' + href + '">' +
-      '<video src="' + escapeHtml(src) + '" muted preload="metadata"></video>' +
-      '<div class="play-overlay"><i class="fa-solid fa-circle-play"></i></div>' +
-      typeBadge + visBadge + '</a>';
-  }
+  const playOverlay = (kind === 'video')
+    ? '<div class="play-overlay"><i class="fa-solid fa-circle-play"></i></div>'
+    : '';
+
   return '<a class="preview" href="' + href + '">' +
-    '<div class="placeholder"><i class="' + kindIconClass(kind) + '"></i>' +
-      '<div class="kind-label">' + kindLabel(kind) + '</div>' +
-    '</div>' +
-    typeBadge + visBadge + '</a>';
+    typeBadge + visBadge +
+    '<div class="a4-thumb">' + renderA4ThumbInner(record, kind) + '</div>' +
+    playOverlay +
+    '</a>';
 }
 
 function renderCard(record, viewer) {
@@ -1012,6 +1171,7 @@ function renderFileDetail(ctx) {
   const subscribed = ownerId !== viewerId && isSubscribed(user, ownerId);
   const isSelf = ownerId === viewerId;
 
+  // Big preview — different per kind.
   let preview;
   if (kind === 'image') {
     preview = '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(record.chapterName) + '">';
@@ -1020,12 +1180,28 @@ function renderFileDetail(ctx) {
   } else if (kind === 'audio') {
     preview = '<audio src="' + escapeHtml(src) + '" controls preload="metadata"></audio>';
   } else if (kind === 'pdf') {
-    preview = '<iframe src="' + escapeHtml(src) + '" title="PDF preview"></iframe>';
+    // Show the A4 thumbnail on the left and offer the iframe below.
+    const thumbUrl = record.thumbnailUrl || buildA4ThumbnailUrl(record);
+    if (thumbUrl) {
+      preview = '<img src="' + escapeHtml(thumbUrl) + '" alt="' + escapeHtml(record.chapterName) + '">';
+    } else {
+      preview = '<div class="placeholder"><i class="' + kindIconClass(kind) + '"></i>' +
+        '<div class="kind-label">' + kindLabel(kind) + '</div></div>';
+    }
   } else {
-    preview = '<div class="placeholder"><i class="' + kindIconClass(kind) + '"></i>' +
-      '<div class="kind-label">' + kindLabel(kind) + '</div>' +
-      '<div class="text-muted" style="font-size:12.5px;font-family:Poppins,sans-serif">Preview not available. Download the file to view it.</div>' +
-    '</div>';
+    // Raw doc — show big A4 sheet with fallback (or generated thumb if Cloudinary managed one).
+    const thumbUrl = record.thumbnailUrl || buildA4ThumbnailUrl(record);
+    const inner = thumbUrl
+      ? '<img src="' + escapeHtml(thumbUrl) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">'
+      : '';
+    preview = '<div class="detail-a4-wrap"><div class="detail-a4">' +
+      '<div class="a4-fallback">' +
+        '<i class="' + kindIconClass(kind) + '"></i>' +
+        '<div class="ext-badge">' + escapeHtml(fileExtUpper(record.originalName)) + '</div>' +
+        '<div class="lines"><span></span><span></span><span></span><span></span></div>' +
+      '</div>' +
+      inner +
+    '</div></div>';
   }
 
   let stars = '';
@@ -1079,6 +1255,11 @@ function renderFileDetail(ctx) {
       '<div class="detail-grid">' +
         '<div>' +
           '<div class="detail-preview">' + preview + '</div>' +
+          (kind === 'pdf'
+            ? '<div class="card" style="margin-top:16px;padding:0;border:0;box-shadow:none">' +
+                '<iframe src="' + escapeHtml(src) + '" title="PDF preview" style="width:100%;height:640px;border:1px solid #e4e4e7;background:#fff"></iframe>' +
+              '</div>'
+            : '') +
           '<div class="card" style="margin-top:16px">' +
             '<div class="file-top" style="margin-bottom:10px">' +
               '<span class="badge badge-dark"><i class="fa-solid fa-bookmark"></i>Chapter ' + escapeHtml(record.chapterNo) + '</span>' +
@@ -1242,13 +1423,9 @@ app.use((req, res, next) => {
   next();
 });
 
-/* ---- Body parsers ---- */
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 
-/* ---- Session + Mongo store ----
- * secure:'auto' works on HTTP (localhost) AND HTTPS (production behind proxy).
- */
 app.use(session({
   name: 'zinc.sid',
   secret: SESSION_SECRET,
@@ -1269,7 +1446,6 @@ app.use(session({
   }
 }));
 
-/* ---- Attach current user ---- */
 app.use(async (req, res, next) => {
   req.user = null;
   if (req.session && req.session.userId) {
@@ -1544,18 +1720,26 @@ app.post('/upload', requireAuth, uploadSingle, async (req, res, next) => {
     }
     if (req.file.size > MAX_FILE_SIZE) return fail('File is too large. The maximum allowed size is 100 MB.', 413);
 
-    // Upload the buffer to Cloudinary (no disk usage).
     const result = await uploadBufferToCloudinary(req.file.buffer, req.file.originalname);
+
+    // Precompute the A4 thumbnail URL for supported resource types.
+    const pseudoRecord = {
+      mimeType: req.file.mimetype || 'application/octet-stream',
+      originalName: normalizeOriginalName(req.file.originalname),
+      storedName: result.public_id
+    };
+    const thumbnailUrl = buildA4ThumbnailUrl(pseudoRecord);
 
     await File.create({
       owner: user._id,
       ownerUsername: user.username,
       chapterNo, chapterName, subject, writer, description, visibility,
-      originalName: normalizeOriginalName(req.file.originalname),
+      originalName: pseudoRecord.originalName,
       storedName: result.public_id,
       fileUrl: result.secure_url,
+      thumbnailUrl: thumbnailUrl || '',
       size: result.bytes || req.file.size,
-      mimeType: req.file.mimetype || 'application/octet-stream'
+      mimeType: pseudoRecord.mimeType
     });
 
     res.redirect('/?upload=success');
@@ -1621,7 +1805,11 @@ app.get('/files/:id/download', requireAuth, async (req, res, next) => {
 
     await File.updateOne({ _id: result.record._id }, { $inc: { downloads: 1 } });
 
-    const dl = buildCloudinaryDownloadUrl(result.record.fileUrl, result.record.originalName);
+    const dl = buildCloudinaryDownloadUrl(
+      result.record.fileUrl,
+      result.record.originalName,
+      result.record.mimeType
+    );
     return res.redirect(dl);
   } catch (err) { next(err); }
 });
@@ -1752,6 +1940,7 @@ async function start() {
       console.log('[zinc-drive] Running at http://localhost:' + PORT);
       console.log('[zinc-drive] Environment: ' + NODE_ENV);
       console.log('[zinc-drive] Storage: Cloudinary (' + CLOUDINARY_CLOUD_NAME + ')');
+      console.log('[zinc-drive] A4 thumbnails: ' + A4_THUMB_W + 'x' + A4_THUMB_H);
       console.log('[zinc-drive] Max upload size: ' + formatBytes(MAX_FILE_SIZE));
     });
 
