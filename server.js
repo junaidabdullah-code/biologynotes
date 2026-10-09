@@ -7,6 +7,7 @@
  * Icons: Font Awesome 6
  * Storage: Cloudinary (works on Render free tier)
  * Thumbnails: A4 aspect-ratio (210:297) generated via Cloudinary transformations
+ * Features: auth, uploads, ratings, subscriptions, delete
  *
  * Run with: node server.js
  */
@@ -143,8 +144,8 @@ const fileSchema = new mongoose.Schema(
     originalName: { type: String, required: true, maxlength: 300 },
     storedName: { type: String, required: true },     // Cloudinary public_id
     fileUrl: { type: String, required: true },        // Cloudinary secure_url
+    resourceType: { type: String, default: 'image' }, // Cloudinary resource_type: image|video|raw
     thumbnailUrl: { type: String, default: '' },      // Cloudinary A4 thumb URL (may be '')
-    thumbnailId: { type: String, default: '' },       // Cloudinary public_id of generated thumb (optional)
     size: { type: Number, required: true, min: 0 },
     mimeType: { type: String, default: 'application/octet-stream' },
     downloads: { type: Number, default: 0 },
@@ -335,6 +336,28 @@ function uploadBufferToCloudinary(buffer, originalName) {
 }
 
 /**
+ * Delete a Cloudinary asset (and any derived thumbnails).
+ * `resourceType` MUST match what Cloudinary stored ('image' | 'video' | 'raw').
+ */
+function deleteFromCloudinary(publicId, resourceType) {
+  return new Promise((resolve) => {
+    if (!publicId) return resolve({ ok: false, error: 'no-public-id' });
+    const type = ['image', 'video', 'raw'].includes(resourceType) ? resourceType : 'image';
+    cloudinary.uploader.destroy(
+      publicId,
+      { resource_type: type, invalidate: true },
+      (err, result) => {
+        if (err) {
+          console.warn('[zinc-drive] Cloudinary destroy error:', err.message);
+          return resolve({ ok: false, error: err.message });
+        }
+        resolve({ ok: true, result: result });
+      }
+    );
+  });
+}
+
+/**
  * Builds an A4-shaped thumbnail URL (620×877) via Cloudinary transformations.
  *
  * Returns '' when no thumbnail is possible (audio, raw docs like .docx/.zip/.txt).
@@ -402,12 +425,10 @@ function buildCloudinaryDownloadUrl(fileUrl, originalName, mimeType) {
 
   const kind = fileKind(mimeType, originalName);
 
-  // Raw + text files: return the CDN URL as-is.
   if (kind === 'file' || kind === 'text') {
     return fileUrl;
   }
 
-  // Strip extension + sanitize the filename for the fl_attachment flag.
   let baseName = String(originalName || 'download');
   baseName = baseName.replace(/\.[^.]+$/, '');
   baseName = baseName.replace(/[^a-zA-Z0-9_\- ]/g, '_');
@@ -492,6 +513,8 @@ p{margin:0}
 .btn-ghost:hover{background:#f4f4f5;color:#18181b}
 .btn-danger{background:#fff;color:#b91c1c;border-color:#fecaca}
 .btn-danger:hover{background:#fef2f2}
+.btn-danger-solid{background:#b91c1c;color:#fff;border-color:#b91c1c}
+.btn-danger-solid:hover{background:#991b1b;border-color:#991b1b}
 .btn-block{width:100%}
 .btn-xs{height:32px;padding:0 11px;font-size:12.5px}
 .btn-xs i{font-size:11.5px}
@@ -671,6 +694,36 @@ p{margin:0}
 .detail-a4 .a4-fallback .ext-badge{font-size:13px;padding:7px 14px}
 .detail-a4 .a4-fallback .lines{width:70%;gap:7px}
 .detail-a4 .a4-fallback .lines span{height:2px}
+
+/* Sidebar A4 thumbnail card */
+.a4-thumb-card{background:#fff;border:1px solid #e4e4e7;display:flex;flex-direction:column}
+.a4-thumb-card-head{
+  display:flex;align-items:center;gap:8px;
+  padding:12px 16px;border-bottom:1px solid #f4f4f5;
+  font-family:'Poppins',sans-serif;font-size:12.5px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;color:#52525b;
+}
+.a4-thumb-card-head i{font-size:12px;color:#a1a1aa}
+.a4-thumb-card-body{
+  padding:20px;display:flex;align-items:center;justify-content:center;
+  background:
+    linear-gradient(135deg,#fafafa 0%,#f0f0f1 100%);
+  position:relative;
+  min-height:280px;
+}
+.a4-thumb-card-body::before{
+  content:'';position:absolute;inset:0;
+  background-image:
+    linear-gradient(rgba(228,228,231,.5) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(228,228,231,.5) 1px,transparent 1px);
+  background-size:18px 18px;opacity:.4;pointer-events:none;
+}
+.a4-thumb-card-body .a4-thumb{
+  height:auto;
+  aspect-ratio:210/297;
+  width:100%;
+  max-width:230px;
+}
 
 .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:18px;border-top:1px solid #f4f4f5}
 .meta-item{display:flex;flex-direction:column;gap:3px;border-bottom:1px solid #f4f4f5;padding:12px 0}
@@ -859,7 +912,6 @@ function renderA4ThumbInner(record, kind) {
     ? '<img src="' + escapeHtml(thumbUrl) + '" alt="' + escapeHtml(record.chapterName) + '" loading="lazy" onerror="this.style.display=\'none\'">'
     : '';
 
-  // Fallback sits behind; img overlays it. If the img fails, it hides itself.
   return fallback + img;
 }
 
@@ -892,16 +944,20 @@ function renderCard(record, viewer) {
   const subscribed = viewer && viewerId !== ownerId && isSubscribed(viewer, ownerId);
   const isSelf = viewer && viewerId === ownerId;
 
-  let subscribeBtn = '';
-  if (viewer && !isSelf) {
-    subscribeBtn = '<form method="POST" action="/users/' + ownerId + '/subscribe" class="inline-form">' +
+  let actionBtn = '';
+  if (viewer && isSelf) {
+    // Owner sees a Delete button (with confirm prompt).
+    actionBtn = '<form method="POST" action="/files/' + encodeURIComponent(String(record._id)) + '/delete" class="inline-form" onsubmit="return confirm(\'Delete this file permanently? This cannot be undone.\');">' +
+      '<button type="submit" class="btn btn-xs btn-danger" title="Delete file">' +
+        '<i class="fa-solid fa-trash-can"></i>Delete' +
+      '</button></form>';
+  } else if (viewer) {
+    actionBtn = '<form method="POST" action="/users/' + ownerId + '/subscribe" class="inline-form">' +
       '<button type="submit" class="btn btn-xs ' + (subscribed ? 'btn-outline' : 'btn-primary') + '">' +
         (subscribed
           ? '<i class="fa-solid fa-user-check"></i>Following'
           : '<i class="fa-solid fa-user-plus"></i>Follow') +
       '</button></form>';
-  } else if (viewer && isSelf) {
-    subscribeBtn = '<span class="badge"><i class="fa-solid fa-user"></i>You</span>';
   }
 
   const stars = renderStars(avg, 11);
@@ -928,7 +984,7 @@ function renderCard(record, viewer) {
             '<div class="avatar-sm">' + escapeHtml((ownerName || '?').trim().charAt(0).toUpperCase() || '?') + '</div>' +
             '<a href="/users/' + encodeURIComponent(ownerHandle) + '">@' + escapeHtml(ownerHandle) + '</a>' +
           '</div>' +
-          subscribeBtn +
+          actionBtn +
         '</div>' +
       '</div>' +
     '</article>';
@@ -1180,16 +1236,9 @@ function renderFileDetail(ctx) {
   } else if (kind === 'audio') {
     preview = '<audio src="' + escapeHtml(src) + '" controls preload="metadata"></audio>';
   } else if (kind === 'pdf') {
-    // Show the A4 thumbnail on the left and offer the iframe below.
-    const thumbUrl = record.thumbnailUrl || buildA4ThumbnailUrl(record);
-    if (thumbUrl) {
-      preview = '<img src="' + escapeHtml(thumbUrl) + '" alt="' + escapeHtml(record.chapterName) + '">';
-    } else {
-      preview = '<div class="placeholder"><i class="' + kindIconClass(kind) + '"></i>' +
-        '<div class="kind-label">' + kindLabel(kind) + '</div></div>';
-    }
+    preview = '<iframe src="' + escapeHtml(src) + '" title="PDF preview"></iframe>';
   } else {
-    // Raw doc — show big A4 sheet with fallback (or generated thumb if Cloudinary managed one).
+    // Raw doc — show big A4 sheet with fallback.
     const thumbUrl = record.thumbnailUrl || buildA4ThumbnailUrl(record);
     const inner = thumbUrl
       ? '<img src="' + escapeHtml(thumbUrl) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">'
@@ -1223,6 +1272,22 @@ function renderFileDetail(ctx) {
         '</button></form>'
     : (isSelf ? '<a class="btn btn-outline btn-block" href="/users/' + encodeURIComponent(user.username) + '"><i class="fa-regular fa-user"></i>View my profile</a>' : '');
 
+  // Delete button on detail page (owner only).
+  const deleteBtn = isSelf
+    ? '<form method="POST" action="/files/' + encodeURIComponent(fid) + '/delete" class="inline-form" onsubmit="return confirm(\'Delete this file permanently? This cannot be undone.\');">' +
+        '<button type="submit" class="btn btn-danger btn-xs"><i class="fa-solid fa-trash-can"></i>Delete</button>' +
+      '</form>'
+    : '';
+
+  // A4 thumbnail card for the sidebar (always shown, all file types).
+  const sideThumbHtml =
+    '<div class="a4-thumb-card">' +
+      '<div class="a4-thumb-card-head"><i class="fa-solid fa-file-image"></i>A4 Preview</div>' +
+      '<div class="a4-thumb-card-body">' +
+        '<div class="a4-thumb">' + renderA4ThumbInner(record, kind) + '</div>' +
+      '</div>' +
+    '</div>';
+
   const ratingBlock = '' +
     '<div class="rating-block" id="rating-block" data-file-id="' + escapeHtml(fid) + '">' +
       '<div class="rating-head">' +
@@ -1245,6 +1310,7 @@ function renderFileDetail(ctx) {
       '<div class="flex-between" style="margin-bottom:16px">' +
         '<a class="btn btn-ghost btn-xs" href="' + (record.visibility === 'public' ? '/gallery' : '/') + '"><i class="fa-solid fa-arrow-left"></i>Back</a>' +
         '<div class="row">' +
+          deleteBtn +
           '<a class="btn btn-primary btn-xs" href="/files/' + encodeURIComponent(fid) + '/download"><i class="fa-solid fa-download"></i>Download</a>' +
         '</div>' +
       '</div>' +
@@ -1255,11 +1321,6 @@ function renderFileDetail(ctx) {
       '<div class="detail-grid">' +
         '<div>' +
           '<div class="detail-preview">' + preview + '</div>' +
-          (kind === 'pdf'
-            ? '<div class="card" style="margin-top:16px;padding:0;border:0;box-shadow:none">' +
-                '<iframe src="' + escapeHtml(src) + '" title="PDF preview" style="width:100%;height:640px;border:1px solid #e4e4e7;background:#fff"></iframe>' +
-              '</div>'
-            : '') +
           '<div class="card" style="margin-top:16px">' +
             '<div class="file-top" style="margin-bottom:10px">' +
               '<span class="badge badge-dark"><i class="fa-solid fa-bookmark"></i>Chapter ' + escapeHtml(record.chapterNo) + '</span>' +
@@ -1281,6 +1342,8 @@ function renderFileDetail(ctx) {
         '</div>' +
 
         '<aside>' +
+          sideThumbHtml +
+          '<div style="height:14px"></div>' +
           ratingBlock +
           '<div style="height:14px"></div>' +
           '<div class="uploader-card">' +
@@ -1539,7 +1602,10 @@ app.get('/', requireAuth, async (req, res, next) => {
 
     if (sort === 'rating') records = records.sort((a, b) => averageRating(b) - averageRating(a));
 
-    const notice = req.query.upload === 'success' ? 'Your file was uploaded successfully.' : '';
+    let notice = '';
+    if (req.query.upload === 'success') notice = 'Your file was uploaded successfully.';
+    else if (req.query.deleted === 'success') notice = 'The file was deleted successfully.';
+
     res.send(renderHome({ user, records, notice, filter, sort, query }));
   } catch (err) { next(err); }
 });
@@ -1737,6 +1803,7 @@ app.post('/upload', requireAuth, uploadSingle, async (req, res, next) => {
       originalName: pseudoRecord.originalName,
       storedName: result.public_id,
       fileUrl: result.secure_url,
+      resourceType: result.resource_type || 'image',
       thumbnailUrl: thumbnailUrl || '',
       size: result.bytes || req.file.size,
       mimeType: pseudoRecord.mimeType
@@ -1750,7 +1817,7 @@ app.post('/upload', requireAuth, uploadSingle, async (req, res, next) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Routes — file detail / raw / download / rate
+ * Routes — file detail / raw / download / rate / delete
  * ------------------------------------------------------------------ */
 
 async function findAccessibleFile(req, id) {
@@ -1811,6 +1878,39 @@ app.get('/files/:id/download', requireAuth, async (req, res, next) => {
       result.record.mimeType
     );
     return res.redirect(dl);
+  } catch (err) { next(err); }
+});
+
+/**
+ * Delete a file — owner only.
+ * Removes the asset (and its derived thumbnails) from Cloudinary, then the DB record.
+ */
+app.post('/files/:id/delete', requireAuth, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!isValidObjectId(id)) {
+      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
+    }
+
+    const record = await File.findById(id).lean();
+    if (!record) {
+      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
+    }
+    if (String(record.owner) !== String(req.user._id)) {
+      return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You can only delete your own files.'));
+    }
+
+    // 1. Delete from Cloudinary (best-effort — file may already be gone).
+    const destroyResult = await deleteFromCloudinary(record.storedName, record.resourceType);
+    if (!destroyResult.ok) {
+      console.warn('[zinc-drive] Cloudinary delete skipped/failed for', record.storedName, '-', destroyResult.error);
+      // We still remove the DB record so the app doesn't show a broken entry.
+    }
+
+    // 2. Remove from MongoDB.
+    await File.deleteOne({ _id: record._id });
+
+    return res.redirect('/?deleted=success');
   } catch (err) { next(err); }
 });
 
