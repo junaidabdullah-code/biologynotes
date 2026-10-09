@@ -7,7 +7,8 @@
  * Icons: Font Awesome 6
  * Storage: Cloudinary (works on Render free tier)
  * Thumbnails: A4 aspect-ratio (210:297) generated via Cloudinary transformations
- * Features: auth, notes + other uploads with tags, ratings, subscriptions, delete, edit, share, avatars
+ * Features: auth, notes + other uploads with tags, ratings, subscriptions, delete,
+ *           edit file (with optional replacement), edit profile, delete account, share, avatars
  *
  * Run with: node server.js
  */
@@ -15,7 +16,7 @@
 require('dotenv').config();
 
 /* ------------------------------------------------------------------ *
- * DNS FIX — public resolvers for mongodb+srv:// on restrictive ISPs
+ * DNS FIX
  * ------------------------------------------------------------------ */
 const dns = require('dns');
 try {
@@ -39,7 +40,7 @@ const crypto = require('crypto');
 const cloudinary = require('cloudinary').v2;
 
 /* ------------------------------------------------------------------ *
- * connect-mongo — tolerant loader (v3 / v4 / v5)
+ * connect-mongo tolerant loader
  * ------------------------------------------------------------------ */
 let MongoStore;
 (function loadMongoStore() {
@@ -50,7 +51,6 @@ let MongoStore;
     MongoStore = candidate;
     return;
   }
-
   if (typeof mod === 'function') {
     try {
       const v3 = mod(session);
@@ -59,7 +59,6 @@ let MongoStore;
       return;
     } catch (e) { /* fall through */ }
   }
-
   throw new Error(
     'connect-mongo export shape not recognised.\n' +
     'Run: npm uninstall connect-mongo && npm install connect-mongo@5.1.0'
@@ -67,9 +66,8 @@ let MongoStore;
 })();
 
 /* ------------------------------------------------------------------ *
- * Configuration from environment
+ * Config
  * ------------------------------------------------------------------ */
-
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'biologynotes-insecure-dev-secret-change-me';
 const MONGO_URI = process.env.MONGO_URI;
@@ -100,11 +98,10 @@ cloudinary.config({
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
-
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
+const MAX_AVATAR_SIZE = 4 * 1024 * 1024;
 const A4_THUMB_W = 620;
 const A4_THUMB_H = 877;
-
 const MAX_TAGS = 3;
 
 /* ------------------------------------------------------------------ *
@@ -137,9 +134,8 @@ const GOOGLE_VERIFICATION_META =
   '<meta name="google-site-verification" content="DWCXYjGiC1wcfs-PwgwpSYUoAASJLNUOMR3tQ7f9Nos" />';
 
 /* ------------------------------------------------------------------ *
- * Mongoose schemas
+ * Schemas
  * ------------------------------------------------------------------ */
-
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true, maxlength: 80 },
@@ -199,7 +195,6 @@ const File = mongoose.model('File', fileSchema);
 /* ------------------------------------------------------------------ *
  * Helpers
  * ------------------------------------------------------------------ */
-
 function escapeHtml(value) {
   return String(value === undefined || value === null ? '' : value)
     .replace(/&/g, '&amp;')
@@ -368,19 +363,19 @@ function renderAvatar(user, size) {
 /* ------------------------------------------------------------------ *
  * Cloudinary helpers
  * ------------------------------------------------------------------ */
-
-function uploadBufferToCloudinary(buffer, originalName, folder) {
+function uploadBufferToCloudinary(buffer, originalName, folder, resourceType) {
   return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        folder: folder || 'biologynotes',
-        resource_type: 'auto',
-        use_filename: true,
-        unique_filename: true,
-        filename_override: originalName
-      },
-      (error, result) => (error ? reject(error) : resolve(result))
-    );
+    const opts = {
+      folder: folder || 'biologynotes',
+      resource_type: resourceType || 'auto',
+      use_filename: true,
+      unique_filename: true,
+      filename_override: originalName
+    };
+    const stream = cloudinary.uploader.upload_stream(opts, (error, result) => {
+      if (error) return reject(error);
+      resolve(result);
+    });
     stream.end(buffer);
   });
 }
@@ -451,12 +446,8 @@ function buildA4ThumbnailUrl(record) {
 
 function buildCloudinaryDownloadUrl(fileUrl, originalName, mimeType) {
   if (!fileUrl) return fileUrl;
-
   const kind = fileKind(mimeType, originalName);
-
-  if (kind === 'file' || kind === 'text') {
-    return fileUrl;
-  }
+  if (kind === 'file' || kind === 'text') return fileUrl;
 
   let baseName = String(originalName || 'download');
   baseName = baseName.replace(/\.[^.]+$/, '');
@@ -469,7 +460,6 @@ function buildCloudinaryDownloadUrl(fileUrl, originalName, mimeType) {
 /* ------------------------------------------------------------------ *
  * Styling
  * ------------------------------------------------------------------ */
-
 const FONTS_LINK =
   '<link rel="preconnect" href="https://fonts.googleapis.com">' +
   '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
@@ -559,6 +549,7 @@ p{margin:0}
 .alert i{font-size:14px;margin-top:2px}
 .alert-error{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
 .alert-success{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+.alert-warning{background:#fefce8;border-color:#fde68a;color:#854d0e}
 
 .auth-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 64px);padding:40px 20px}
 .auth-card{width:100%;max-width:440px;background:#fff;border:1px solid #e4e4e7;padding:32px;box-shadow:0 1px 3px rgba(24,24,27,.05)}
@@ -589,24 +580,9 @@ p{margin:0}
 .file-card{background:#fff;border:1px solid #e4e4e7;display:flex;flex-direction:column;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
 .file-card:hover{border-color:#d4d4d8;box-shadow:0 4px 14px rgba(24,24,27,.08);transform:translateY(-2px)}
 
-.preview{
-  position:relative;display:flex;align-items:center;justify-content:center;
-  height:280px;background:linear-gradient(135deg,#f4f4f5 0%,#e8e8ea 100%);
-  border-bottom:1px solid #e4e4e7;overflow:hidden;padding:18px;
-}
-.preview::before{
-  content:'';position:absolute;inset:0;
-  background-image:
-    linear-gradient(rgba(228,228,231,.55) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(228,228,231,.55) 1px,transparent 1px);
-  background-size:22px 22px;opacity:.35;pointer-events:none;
-}
-.a4-thumb{
-  position:relative;aspect-ratio:210 / 297;height:100%;max-width:100%;background:#fff;
-  border:1px solid #d4d4d8;
-  box-shadow:0 4px 14px rgba(24,24,27,.14),0 1px 3px rgba(24,24,27,.08);
-  overflow:hidden;transition:transform .22s ease,box-shadow .22s ease;z-index:1;
-}
+.preview{position:relative;display:flex;align-items:center;justify-content:center;height:280px;background:linear-gradient(135deg,#f4f4f5 0%,#e8e8ea 100%);border-bottom:1px solid #e4e4e7;overflow:hidden;padding:18px}
+.preview::before{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(228,228,231,.55) 1px,transparent 1px),linear-gradient(90deg,rgba(228,228,231,.55) 1px,transparent 1px);background-size:22px 22px;opacity:.35;pointer-events:none}
+.a4-thumb{position:relative;aspect-ratio:210 / 297;height:100%;max-width:100%;background:#fff;border:1px solid #d4d4d8;box-shadow:0 4px 14px rgba(24,24,27,.14),0 1px 3px rgba(24,24,27,.08);overflow:hidden;transition:transform .22s ease,box-shadow .22s ease;z-index:1}
 .file-card:hover .a4-thumb{transform:translateY(-3px) scale(1.015);box-shadow:0 10px 24px rgba(24,24,27,.18),0 2px 5px rgba(24,24,27,.10)}
 .a4-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#fff}
 .a4-fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#fff}
@@ -623,14 +599,7 @@ p{margin:0}
 .preview .type-badge{position:absolute;top:12px;left:12px;background:rgba(24,24,27,.88);color:#fafafa;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px);z-index:2}
 .preview .vis-badge{position:absolute;bottom:12px;right:12px;background:rgba(255,255,255,.95);color:#18181b;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;border:1px solid #e4e4e7;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px);z-index:2}
 
-.ribbon{
-  position:absolute;top:0;right:0;z-index:3;
-  background:#facc15;color:#18181b;
-  font-family:'Poppins',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.14em;
-  padding:7px 12px;text-transform:uppercase;
-  box-shadow:0 2px 6px rgba(24,24,27,.18);
-  display:inline-flex;align-items:center;gap:5px;
-}
+.ribbon{position:absolute;top:0;right:0;z-index:3;background:#facc15;color:#18181b;font-family:'Poppins',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.14em;padding:7px 12px;text-transform:uppercase;box-shadow:0 2px 6px rgba(24,24,27,.18);display:inline-flex;align-items:center;gap:5px}
 .ribbon i{font-size:10px}
 
 .preview .play-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.95);background:rgba(24,24,27,.22);pointer-events:none;transition:background-color .2s ease;z-index:1}
@@ -720,28 +689,13 @@ p{margin:0}
 .detail-preview .placeholder i{font-size:64px;color:#52525b}
 .detail-preview .placeholder .kind-label{font-size:11px;letter-spacing:.16em;font-weight:600;color:#fafafa;font-family:'Poppins',sans-serif}
 
-.detail-preview-light{
-  background: linear-gradient(135deg,#fafafa 0%,#f0f0f1 100%);
-  border-color:#e4e4e7;
-  padding:26px;
-  min-height:460px;
-}
-.detail-preview-light::before{
-  content:'';position:absolute;inset:0;
-  background-image:
-    linear-gradient(rgba(228,228,231,.55) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(228,228,231,.55) 1px,transparent 1px);
-  background-size:22px 22px;opacity:.5;pointer-events:none;
-}
+.detail-preview-light{background: linear-gradient(135deg,#fafafa 0%,#f0f0f1 100%);border-color:#e4e4e7;padding:26px;min-height:460px}
+.detail-preview-light::before{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(228,228,231,.55) 1px,transparent 1px),linear-gradient(90deg,rgba(228,228,231,.55) 1px,transparent 1px);background-size:22px 22px;opacity:.5;pointer-events:none}
 .detail-preview-light iframe{position:relative;z-index:1;width:100%;height:640px;border:1px solid #d4d4d8;background:#fff}
 .detail-preview-light .detail-a4-wrap{position:relative;z-index:1;padding:0;min-height:auto;background:transparent;border:0;display:flex;align-items:center;justify-content:center}
 
 .detail-a4-wrap{display:flex;align-items:center;justify-content:center;min-height:420px;padding:0}
-.detail-a4{
-  aspect-ratio:210/297;width:100%;max-width:420px;background:#fff;border:1px solid #d4d4d8;
-  box-shadow:0 8px 30px rgba(24,24,27,.18),0 2px 6px rgba(24,24,27,.08);
-  position:relative;overflow:hidden;
-}
+.detail-a4{aspect-ratio:210/297;width:100%;max-width:420px;background:#fff;border:1px solid #d4d4d8;box-shadow:0 8px 30px rgba(24,24,27,.18),0 2px 6px rgba(24,24,27,.08);position:relative;overflow:hidden}
 .detail-a4 .a4-fallback i{font-size:64px}
 .detail-a4 .a4-fallback .ext-badge{font-size:13px;padding:7px 14px}
 .detail-a4 .a4-fallback .lines{width:70%;gap:7px}
@@ -811,13 +765,14 @@ p{margin:0}
 .avatar-card-desc{font-family:'Poppins',sans-serif;font-size:12.5px;color:#71717a;margin:0 0 12px}
 .avatar-card-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .avatar-file-input{font-family:'Poppins',sans-serif;font-size:12.5px;color:#52525b;max-width:230px}
-.avatar-file-input::file-selector-button{
-  font-family:'Poppins',sans-serif;font-size:12.5px;font-weight:500;
-  height:32px;padding:0 11px;margin-right:10px;
-  background:#fff;color:#18181b;border:1px solid #e4e4e7;cursor:pointer;
-  transition:background-color .15s ease,border-color .15s ease;
-}
+.avatar-file-input::file-selector-button{font-family:'Poppins',sans-serif;font-size:12.5px;font-weight:500;height:32px;padding:0 11px;margin-right:10px;background:#fff;color:#18181b;border:1px solid #e4e4e7;cursor:pointer;transition:background-color .15s ease,border-color .15s ease}
 .avatar-file-input::file-selector-button:hover{background:#f4f4f5;border-color:#d4d4d8}
+
+/* Profile manage card */
+.profile-manage-card{background:#fff;border:1px solid #e4e4e7;padding:20px;margin-bottom:22px}
+.profile-manage-title{font-family:'Playfair Display',serif;font-size:16px;font-weight:600;letter-spacing:-.005em;margin:0 0 6px;color:#18181b}
+.profile-manage-desc{font-family:'Poppins',sans-serif;font-size:12.5px;color:#71717a;margin:0 0 14px}
+.profile-manage-actions{display:flex;gap:10px;flex-wrap:wrap}
 
 .error-page{text-align:center;padding:72px 26px}
 .error-page h1{font-size:64px;margin-bottom:6px;font-family:'Playfair Display',serif;font-weight:700}
@@ -833,41 +788,20 @@ p{margin:0}
 .upload-header .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#a1a1aa;font-weight:600;font-family:'Poppins',sans-serif;margin-bottom:4px}
 .upload-header h1{font-size:28px}
 
-/* ------------------------------------------------------------------ *
- * Confirm modal (styled like Render's prompts)
- * ------------------------------------------------------------------ */
-.modal-backdrop{
-  position:fixed;inset:0;z-index:1000;
-  background:rgba(24,24,27,.55);
-  display:flex;align-items:center;justify-content:center;
-  padding:20px;
-  animation:bnFadeIn .15s ease;
-}
+.form-divider{height:1px;background:#f4f4f5;margin:22px 0;border:0}
+
+/* Confirm modal */
+.modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(24,24,27,.55);display:flex;align-items:center;justify-content:center;padding:20px;animation:bnFadeIn .15s ease}
 .modal-backdrop[hidden]{display:none}
 @keyframes bnFadeIn{from{opacity:0}to{opacity:1}}
-.modal{
-  background:#fff;border:1px solid #e4e4e7;
-  max-width:440px;width:100%;padding:26px;
-  box-shadow:0 20px 50px rgba(0,0,0,.35),0 8px 20px rgba(0,0,0,.25);
-  animation:bnModalIn .18s ease;
-}
+.modal{background:#fff;border:1px solid #e4e4e7;max-width:440px;width:100%;padding:26px;box-shadow:0 20px 50px rgba(0,0,0,.35),0 8px 20px rgba(0,0,0,.25);animation:bnModalIn .18s ease}
 @keyframes bnModalIn{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
-.modal-icon{
-  width:48px;height:48px;margin-bottom:16px;
-  display:flex;align-items:center;justify-content:center;font-size:22px;
-  background:#f4f4f5;color:#18181b;
-}
+.modal-icon{width:48px;height:48px;margin-bottom:16px;display:flex;align-items:center;justify-content:center;font-size:22px;background:#f4f4f5;color:#18181b}
 .modal[data-variant="danger"] .modal-icon{background:#fef2f2;color:#b91c1c}
 .modal[data-variant="warning"] .modal-icon{background:#fefce8;color:#854d0e}
 .modal[data-variant="primary"] .modal-icon{background:#f4f4f5;color:#18181b}
-.modal-title{
-  font-family:'Playfair Display',serif;font-size:21px;font-weight:700;
-  letter-spacing:-.015em;margin:0 0 8px;color:#18181b;
-}
-.modal-message{
-  font-family:'Merriweather',serif;font-size:14px;line-height:1.6;
-  color:#52525b;margin:0 0 22px;
-}
+.modal-title{font-family:'Playfair Display',serif;font-size:21px;font-weight:700;letter-spacing:-.015em;margin:0 0 8px;color:#18181b}
+.modal-message{font-family:'Merriweather',serif;font-size:14px;line-height:1.6;color:#52525b;margin:0 0 22px}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
 .modal-actions .btn{min-width:110px}
 
@@ -897,9 +831,8 @@ p{margin:0}
 `;
 
 /* ------------------------------------------------------------------ *
- * Layout + confirm modal + shared UI
+ * Confirm modal + layout
  * ------------------------------------------------------------------ */
-
 const CONFIRM_MODAL_HTML =
   '<div class="modal-backdrop" id="bn-modal" hidden aria-hidden="true">' +
     '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="bn-modal-title" id="bn-modal-inner" data-variant="danger">' +
@@ -951,7 +884,6 @@ const CONFIRM_MODAL_SCRIPT =
     'document.addEventListener("keydown",function(e){if(!backdrop.hidden&&e.key==="Escape")close(false);});' +
     'window.bnConfirm=bnConfirm;' +
 
-    // Auto-bind any form with data-confirm
     'document.addEventListener("submit",function(e){' +
       'var form=e.target;if(!form||form.tagName!=="FORM")return;' +
       'var msg=form.getAttribute("data-confirm");' +
@@ -1023,7 +955,6 @@ function renderTopNav(user, active) {
 /* ------------------------------------------------------------------ *
  * Auth pages
  * ------------------------------------------------------------------ */
-
 function renderRegister(ctx) {
   const { error = '', values = {} } = ctx || {};
   const body = '' +
@@ -1035,8 +966,7 @@ function renderRegister(ctx) {
         '<p class="sub" style="margin:0;text-align:center">Register to start uploading, rating, and subscribing.</p>' +
       '</div>' +
       (error ? '<div class="alert alert-error"><i class="fa-solid fa-circle-exclamation"></i><span>' + escapeHtml(error) + '</span></div>' : '') +
-      '<div class="alert alert-error" id="client-error" style="display:none"><i class="fa-solid fa-circle-exclamation"></i><span></span></div>' +
-      '<form id="register-form" method="POST" action="/register">' +
+      '<form method="POST" action="/register">' +
         '<div class="field"><label class="label" for="f-name">Full name</label>' +
           '<input class="input" id="f-name" name="name" type="text" value="' + escapeHtml(values.name || '') + '" placeholder="Jane Doe" required autocomplete="name"></div>' +
         '<div class="field"><label class="label" for="f-email">Email address</label>' +
@@ -1048,8 +978,7 @@ function renderRegister(ctx) {
         '<button type="submit" class="btn btn-primary btn-block btn-lg"><i class="fa-solid fa-user-plus"></i>Create account</button>' +
       '</form>' +
       '<p class="foot-note">Already registered? <a href="/login">Sign in</a></p>' +
-    '</div></div>' +
-    '<script>(function(){var f=document.getElementById("register-form");var b=document.getElementById("client-error");if(!f||!b)return;f.addEventListener("submit",function(e){var p=f.querySelector("[name=password]").value||"";var s=b.querySelector("span");if(p.length<6){e.preventDefault();s.textContent="Password must be at least 6 characters long.";b.style.display="flex";}else{b.style.display="none";}});})();</script>';
+    '</div></div>';
   return layout('Register · BiologyNotes', body);
 }
 
@@ -1077,9 +1006,8 @@ function renderLogin(ctx) {
 }
 
 /* ------------------------------------------------------------------ *
- * Preview / thumbnail renderer (A4)
+ * Preview renderer
  * ------------------------------------------------------------------ */
-
 function renderA4ThumbInner(record, kind) {
   const ext = fileExtUpper(record.originalName);
   const fallback =
@@ -1106,7 +1034,6 @@ function renderPreview(record) {
     ? '<span class="ribbon"><i class="fa-solid fa-book"></i>NOTES</span>'
     : '';
   const href = '/files/' + encodeURIComponent(String(record._id));
-
   const playOverlay = (kind === 'video')
     ? '<div class="play-overlay"><i class="fa-solid fa-circle-play"></i></div>'
     : '';
@@ -1132,7 +1059,6 @@ function renderCard(record, viewer) {
   const isSelf = viewer && viewerId === ownerId;
   const fileId = String(record._id);
 
-  // Top badges
   const badges = [];
   if (isNote) {
     badges.push('<span class="badge badge-dark"><i class="fa-solid fa-bookmark"></i>CH ' + escapeHtml(record.chapterNo) + '</span>');
@@ -1152,7 +1078,6 @@ function renderCard(record, viewer) {
     }
   }
 
-  // Footer action button(s)
   let actionBtn = '';
   if (viewer && isSelf) {
     actionBtn =
@@ -1206,7 +1131,6 @@ function renderCard(record, viewer) {
 /* ------------------------------------------------------------------ *
  * Listing pages
  * ------------------------------------------------------------------ */
-
 function renderListing(ctx) {
   const {
     viewer, title, subtitle, records, activeNav,
@@ -1300,9 +1224,8 @@ function renderGallery(ctx) {
 }
 
 /* ------------------------------------------------------------------ *
- * Upload page (TWO TABS)
+ * Upload page
  * ------------------------------------------------------------------ */
-
 function renderUpload(ctx) {
   const { user, error = '', values = {}, activeTab = 'notes' } = ctx;
   const visibility = values.visibility === 'private' ? 'private' : 'public';
@@ -1524,7 +1447,6 @@ function renderUpload(ctx) {
 /* ------------------------------------------------------------------ *
  * Share card
  * ------------------------------------------------------------------ */
-
 function renderShareCard() {
   return '' +
     '<div class="share-card">' +
@@ -1546,7 +1468,6 @@ function renderShareCard() {
 /* ------------------------------------------------------------------ *
  * File detail page
  * ------------------------------------------------------------------ */
-
 function renderFileDetail(ctx) {
   const { user, record, owner, notice = '', error = '' } = ctx;
   const kind = fileKind(record.mimeType, record.originalName);
@@ -1563,7 +1484,6 @@ function renderFileDetail(ctx) {
 
   let preview;
   let previewExtraClass = '';
-
   if (kind === 'image') {
     preview = '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(record.chapterName) + '">';
   } else if (kind === 'video') {
@@ -1790,15 +1710,13 @@ function renderFileDetail(ctx) {
 }
 
 /* ------------------------------------------------------------------ *
- * File edit page
+ * File edit page — now with optional file replacement
  * ------------------------------------------------------------------ */
-
 function renderFileEdit(ctx) {
   const { user, record, error = '', values } = ctx;
   const kind = fileKind(record.mimeType, record.originalName);
   const isNote = record.kind === 'note';
 
-  // Values take precedence on error, otherwise use current record.
   const v = values || {
     chapterNo: record.chapterNo || '',
     chapterName: record.chapterName || '',
@@ -1864,13 +1782,13 @@ function renderFileEdit(ctx) {
           '<div>' +
             '<div class="eyebrow">Edit file</div>' +
             '<h1>Update details</h1>' +
-            '<p class="sub" style="margin:6px 0 0">The file itself cannot be changed. To replace it, delete this and upload a new one.</p>' +
+            '<p class="sub" style="margin:6px 0 0">Update the metadata, or upload a new file to replace the current one.</p>' +
           '</div>' +
         '</div>' +
 
         (error ? '<div class="alert alert-error"><i class="fa-solid fa-circle-exclamation"></i><span>' + escapeHtml(error) + '</span></div>' : '') +
 
-        '<form method="POST" action="/files/' + encodeURIComponent(fid) + '/edit"' +
+        '<form method="POST" action="/files/' + encodeURIComponent(fid) + '/edit" enctype="multipart/form-data"' +
           ' data-confirm="These changes will be saved to the file. Continue?"' +
           ' data-confirm-title="Save changes?"' +
           ' data-confirm-action="Save changes"' +
@@ -1888,21 +1806,165 @@ function renderFileEdit(ctx) {
             '</select>' +
           '</div>' +
 
+          '<hr class="form-divider">' +
+
+          // Replace file section
+          '<div class="field">' +
+            '<label class="label">Replace file <span style="color:#a1a1aa;font-weight:400">(optional)</span></label>' +
+            '<div class="alert alert-warning" style="margin-bottom:12px">' +
+              '<i class="fa-solid fa-circle-info"></i>' +
+              '<span>Leave this empty to keep the current file (<b>' + escapeHtml(record.originalName) + '</b>). ' +
+              'Uploading a new file here will permanently replace the old one.</span>' +
+            '</div>' +
+            '<div class="dropzone" id="edit-dropzone" tabindex="0" role="button" aria-label="Replace file (optional)">' +
+              '<input type="file" id="edit-file" name="newFile" aria-label="Replace file (optional)">' +
+              '<div class="dropzone-inner" id="edit-dropzone-default">' +
+                '<div class="dropzone-icon"><i class="fa-solid fa-arrows-rotate"></i></div>' +
+                '<div class="dropzone-title">Drag &amp; drop a new file here to replace, or <span class="browse">browse</span></div>' +
+                '<div class="dropzone-hint">Leave empty to keep the current file &middot; <strong>up to 100 MB</strong></div>' +
+              '</div>' +
+              '<div class="file-chip" id="edit-dropzone-selected" style="display:none">' +
+                '<div class="file-chip-icon" id="edit-chip-icon"><i class="fa-regular fa-file"></i></div>' +
+                '<div class="file-chip-body">' +
+                  '<div class="file-chip-name" id="edit-chip-name">filename.ext</div>' +
+                  '<div class="file-chip-meta">' +
+                    '<span id="edit-chip-size">0 B</span>' +
+                    '<span class="dot"></span>' +
+                    '<span id="edit-chip-type">file</span>' +
+                  '</div>' +
+                '</div>' +
+                '<button type="button" class="file-chip-remove" id="edit-chip-remove" title="Cancel replacement"><i class="fa-solid fa-xmark"></i></button>' +
+              '</div>' +
+              '<div class="progress" id="edit-progress"><div class="progress-bar" id="edit-progress-bar"></div></div>' +
+            '</div>' +
+          '</div>' +
+
           '<div class="form-actions" style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">' +
-            '<button type="submit" class="btn btn-primary btn-lg"><i class="fa-solid fa-floppy-disk"></i>Save changes</button>' +
+            '<button type="submit" class="btn btn-primary btn-lg" id="edit-submit-btn"><i class="fa-solid fa-floppy-disk"></i>Save changes</button>' +
             '<a class="btn btn-outline btn-lg" href="/files/' + encodeURIComponent(fid) + '">Cancel</a>' +
           '</div>' +
         '</form>' +
       '</div>' +
-    '</div>';
+    '</div>' +
+
+    '<script>(function(){' +
+      'var dz=document.getElementById("edit-dropzone");' +
+      'var input=document.getElementById("edit-file");' +
+      'var def=document.getElementById("edit-dropzone-default");' +
+      'var sel=document.getElementById("edit-dropzone-selected");' +
+      'var iconEl=document.getElementById("edit-chip-icon");' +
+      'var nameEl=document.getElementById("edit-chip-name");' +
+      'var sizeEl=document.getElementById("edit-chip-size");' +
+      'var typeEl=document.getElementById("edit-chip-type");' +
+      'var rm=document.getElementById("edit-chip-remove");' +
+      'var prog=document.getElementById("edit-progress");' +
+      'var bar=document.getElementById("edit-progress-bar");' +
+      'var form=document.querySelector("form[action$=\'/edit\']");' +
+      'var btn=document.getElementById("edit-submit-btn");' +
+      'if(!dz||!input)return;' +
+      'function fmt(b){if(!b&&b!==0)return "0 B";var u=["B","KB","MB","GB"],i=Math.min(Math.floor(Math.log(b)/Math.log(1024)),u.length-1);var v=b/Math.pow(1024,i);return v.toFixed(i===0?0:1)+" "+u[i];}' +
+      'function iconFor(name,mime){var ext=(name.split(".").pop()||"").toLowerCase();var m=(mime||"").toLowerCase();if(m.indexOf("image/")===0)return ["fa-regular fa-image","Image"];if(m.indexOf("video/")===0)return ["fa-solid fa-video","Video"];if(m.indexOf("audio/")===0)return ["fa-solid fa-music","Audio"];if(m==="application/pdf"||ext==="pdf")return ["fa-regular fa-file-pdf","PDF"];if(m.indexOf("text/")===0||["txt","md","csv","json","js","ts","html","css","xml","yml","yaml"].indexOf(ext)>=0)return ["fa-regular fa-file-lines","Text"];return ["fa-regular fa-file","File"];}' +
+      'function showFile(f){if(!f){def.style.display="";sel.style.display="none";dz.classList.remove("has-file");return;}var info=iconFor(f.name,f.type);iconEl.innerHTML=\'<i class="\'+info[0]+\'"></i>\';nameEl.textContent=f.name;sizeEl.textContent=fmt(f.size);typeEl.textContent=info[1];def.style.display="none";sel.style.display="flex";dz.classList.add("has-file");}' +
+      'function clearFile(){input.value="";showFile(null);}' +
+      'input.addEventListener("change",function(){showFile(input.files&&input.files[0]);});' +
+      'rm.addEventListener("click",function(e){e.stopPropagation();e.preventDefault();clearFile();});' +
+      '["dragenter","dragover"].forEach(function(ev){dz.addEventListener(ev,function(e){e.preventDefault();e.stopPropagation();dz.classList.add("dragover");});});' +
+      '["dragleave","drop"].forEach(function(ev){dz.addEventListener(ev,function(e){e.preventDefault();e.stopPropagation();dz.classList.remove("dragover");});});' +
+      'dz.addEventListener("drop",function(e){e.preventDefault();var dt=e.dataTransfer;if(!dt||!dt.files||!dt.files.length)return;try{var d=new DataTransfer();for(var i=0;i<dt.files.length;i++)d.items.add(dt.files[i]);input.files=d.files;}catch(err){}showFile(dt.files[0]);});' +
+      'dz.addEventListener("click",function(e){if(e.target===input)return;if(rm.contains(e.target))return;input.click();});' +
+      'if(form){form.addEventListener("submit",function(){var f=input.files&&input.files[0];if(!f)return;prog.classList.add("on");bar.style.width="8%";var t=setInterval(function(){var w=parseFloat(bar.style.width)||0;if(w<92){bar.style.width=(w+Math.random()*7)+"%";}else{clearInterval(t);}},180);if(btn){btn.disabled=true;btn.innerHTML=\'<i class="fa-solid fa-circle-notch fa-spin"></i>Saving...\';}});}' +
+    '})();' +
+    '</script>';
 
   return layout('Edit · ' + record.chapterName + ' · BiologyNotes', body);
 }
 
 /* ------------------------------------------------------------------ *
- * User profile page (with avatar upload)
+ * Profile edit page
  * ------------------------------------------------------------------ */
+function renderProfileEdit(ctx) {
+  const { user, error = '', values, notice = '' } = ctx;
+  const v = values || { name: user.name, email: user.email, username: user.username };
 
+  const body = '' +
+    renderTopNav(user, '') +
+    '<div class="container">' +
+      '<div class="flex-between" style="margin-bottom:16px">' +
+        '<a class="btn btn-ghost btn-xs" href="/users/' + encodeURIComponent(user.username) + '"><i class="fa-solid fa-arrow-left"></i>Back to profile</a>' +
+        '<div class="row">' +
+          '<span class="badge badge-dark"><i class="fa-regular fa-user"></i>Account</span>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="card" style="max-width:640px;margin:0 auto">' +
+        '<div class="upload-header">' +
+          '<div>' +
+            '<div class="eyebrow">Account settings</div>' +
+            '<h1>Edit profile</h1>' +
+            '<p class="sub" style="margin:6px 0 0">Update your name, email, username, or change your password.</p>' +
+          '</div>' +
+        '</div>' +
+
+        (error ? '<div class="alert alert-error"><i class="fa-solid fa-circle-exclamation"></i><span>' + escapeHtml(error) + '</span></div>' : '') +
+        (notice ? '<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i><span>' + escapeHtml(notice) + '</span></div>' : '') +
+
+        '<form method="POST" action="/profile/edit"' +
+          ' data-confirm="Your profile details will be updated. Continue?"' +
+          ' data-confirm-title="Save profile changes?"' +
+          ' data-confirm-action="Save changes"' +
+          ' data-confirm-variant="primary"' +
+          ' data-confirm-icon="fa-floppy-disk">' +
+
+          '<div class="field">' +
+            '<label class="label" for="p-name">Full name</label>' +
+            '<input class="input" id="p-name" name="name" type="text" value="' + escapeHtml(v.name || '') + '" placeholder="Jane Doe" required maxlength="80" autocomplete="name">' +
+          '</div>' +
+
+          '<div class="field">' +
+            '<label class="label" for="p-email">Email address</label>' +
+            '<input class="input" id="p-email" name="email" type="email" value="' + escapeHtml(v.email || '') + '" placeholder="jane@example.com" required autocomplete="email">' +
+          '</div>' +
+
+          '<div class="field">' +
+            '<label class="label" for="p-username">Username</label>' +
+            '<input class="input" id="p-username" name="username" type="text" value="' + escapeHtml(v.username || '') + '" placeholder="janedoe" required minlength="3" maxlength="20" autocomplete="username">' +
+            '<p class="tag-hint"><i class="fa-solid fa-circle-info"></i>3–20 characters — letters, numbers, underscores only.</p>' +
+          '</div>' +
+
+          '<hr class="form-divider">' +
+
+          '<h2 style="font-size:16px;margin:0 0 6px">Change password</h2>' +
+          '<p class="sub" style="margin:0 0 14px;font-size:13px">Leave these fields blank if you don\'t want to change your password.</p>' +
+
+          '<div class="field">' +
+            '<label class="label" for="p-current-password">Current password</label>' +
+            '<input class="input" id="p-current-password" name="currentPassword" type="password" placeholder="Your current password" autocomplete="current-password">' +
+          '</div>' +
+
+          '<div class="field">' +
+            '<label class="label" for="p-new-password">New password</label>' +
+            '<input class="input" id="p-new-password" name="newPassword" type="password" placeholder="At least 6 characters" minlength="6" autocomplete="new-password">' +
+          '</div>' +
+
+          '<div class="field">' +
+            '<label class="label" for="p-confirm-password">Confirm new password</label>' +
+            '<input class="input" id="p-confirm-password" name="confirmPassword" type="password" placeholder="Re-enter new password" minlength="6" autocomplete="new-password">' +
+          '</div>' +
+
+          '<div class="form-actions" style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">' +
+            '<button type="submit" class="btn btn-primary btn-lg"><i class="fa-solid fa-floppy-disk"></i>Save changes</button>' +
+            '<a class="btn btn-outline btn-lg" href="/users/' + encodeURIComponent(user.username) + '">Cancel</a>' +
+          '</div>' +
+        '</form>' +
+      '</div>' +
+    '</div>';
+
+  return layout('Edit profile · BiologyNotes', body);
+}
+
+/* ------------------------------------------------------------------ *
+ * User profile page
+ * ------------------------------------------------------------------ */
 function renderUserProfile(ctx) {
   const { viewer, profileUser, records, subscribed, isSelf, avatarNotice = '', avatarError = '' } = ctx;
   const initial = (profileUser.name || profileUser.username || '?').trim().charAt(0).toUpperCase() || '?';
@@ -1954,6 +2016,24 @@ function renderUserProfile(ctx) {
       '</div>'
     : '';
 
+  const manageCard = isSelf
+    ? '<div class="profile-manage-card">' +
+        '<h2 class="profile-manage-title">Account settings</h2>' +
+        '<p class="profile-manage-desc">Edit your profile details, change your password, or delete your account.</p>' +
+        '<div class="profile-manage-actions">' +
+          '<a class="btn btn-outline btn-xs" href="/profile/edit"><i class="fa-solid fa-pen"></i>Edit profile</a>' +
+          '<form method="POST" action="/profile/delete" class="inline-form"' +
+            ' data-confirm="Your account and ALL your uploaded files will be permanently deleted. This cannot be undone."' +
+            ' data-confirm-title="Delete your account?"' +
+            ' data-confirm-action="Delete account"' +
+            ' data-confirm-variant="danger"' +
+            ' data-confirm-icon="fa-user-xmark">' +
+            '<button type="submit" class="btn btn-danger btn-xs"><i class="fa-solid fa-user-xmark"></i>Delete account</button>' +
+          '</form>' +
+        '</div>' +
+      '</div>'
+    : '';
+
   const cards = records.map((r) => renderCard(r, viewer)).join('');
   const main = records.length
     ? '<div class="grid">' + cards + '</div>'
@@ -1963,6 +2043,7 @@ function renderUserProfile(ctx) {
     renderTopNav(viewer, '') +
     '<div class="container">' +
       avatarCard +
+      manageCard +
       '<div class="banner">' +
         '<div class="user-info">' +
           renderAvatar(profileUser, 46) +
@@ -1999,7 +2080,6 @@ function renderErrorPage(status, title, message) {
 /* ------------------------------------------------------------------ *
  * Express app + middleware
  * ------------------------------------------------------------------ */
-
 const app = express();
 
 app.set('trust proxy', 1);
@@ -2080,44 +2160,60 @@ function requireAuth(req, res, next) {
 }
 
 /* ------------------------------------------------------------------ *
- * Multer
+ * Multer — file uploads and avatar uploads
  * ------------------------------------------------------------------ */
-
-const upload = multer({
+const uploadFile = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE, files: 1 }
 });
 
-function uploadSingle(fieldName) {
+const uploadAvatar = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_AVATAR_SIZE, files: 1 }
+});
+
+function handleFileUpload(fieldName) {
   const name = fieldName || 'file';
   return function (req, res, next) {
-    upload.single(name)(req, res, (err) => {
+    uploadFile.single(name)(req, res, (err) => {
       if (!err) return next();
-
       let message = 'Upload failed. Please try again.';
       if (err.code === 'LIMIT_FILE_SIZE') message = 'File is too large. The maximum allowed size is 100 MB.';
-      else if (err.code === 'LIMIT_UNEXPECTED_FILE') message = 'Unexpected file field. Use the provided input.';
+      else if (err.code === 'LIMIT_UNEXPECTED_FILE') message = 'Unexpected file field.';
       else if (err.code === 'LIMIT_FILE_COUNT') message = 'Only one file can be uploaded at a time.';
 
       if (!req.user) return res.redirect('/login');
 
-      if (name === 'avatar') {
-        return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent(message));
+      // Handle edit form (has newFile field)
+      if (name === 'newFile') {
+        return res.status(400).send(renderFileEdit({
+          user: req.user,
+          record: { _id: req.params.id, chapterName: 'file', chapterNo: '', subject: '', writer: '', description: '', visibility: 'public', tags: [], kind: 'note', mimeType: '', originalName: '', fileUrl: '', _editFallback: true },
+          error: message
+        }));
       }
 
       const activeTab = (req.body && req.body.kind === 'other') ? 'other' : 'notes';
       return res.status(400).send(renderUpload({
-        user: req.user,
-        error: message,
-        values: req.body || {},
-        activeTab
+        user: req.user, error: message, values: req.body || {}, activeTab
       }));
     });
   };
 }
 
+function handleAvatarUpload(req, res, next) {
+  uploadAvatar.single('avatar')(req, res, (err) => {
+    if (!err) return next();
+    let message = 'Upload failed. Please try again.';
+    if (err.code === 'LIMIT_FILE_SIZE') message = 'Image is too large. Max 4 MB.';
+    else if (err.code === 'LIMIT_UNEXPECTED_FILE') message = 'Unexpected file field.';
+    if (!req.user) return res.redirect('/login');
+    return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent(message));
+  });
+}
+
 /* ------------------------------------------------------------------ *
- * Favicon + robots.txt
+ * Static routes
  * ------------------------------------------------------------------ */
 app.get('/favicon.ico', (req, res) => {
   res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
@@ -2141,9 +2237,8 @@ app.get('/robots.txt', (req, res) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Routes — home / gallery
+ * Home + gallery
  * ------------------------------------------------------------------ */
-
 app.get('/', requireAuth, async (req, res, next) => {
   try {
     const user = req.user;
@@ -2152,30 +2247,19 @@ app.get('/', requireAuth, async (req, res, next) => {
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
 
     const q = {};
-    if (filter === 'mine') {
-      q.owner = user._id;
-    } else if (filter === 'subscribed') {
-      q.visibility = 'public';
-      q.owner = { $in: (user.subscribedTo || []).map((id) => id) };
-    } else if (filter === 'public') {
-      q.visibility = 'public';
-    } else if (filter === 'notes') {
-      q.kind = 'note';
-      q.$or = [{ visibility: 'public' }, { owner: user._id }];
-    } else if (filter === 'other') {
-      q.kind = 'other';
-      q.$or = [{ visibility: 'public' }, { owner: user._id }];
-    } else {
-      q.$or = [{ visibility: 'public' }, { owner: user._id }];
-    }
+    if (filter === 'mine') q.owner = user._id;
+    else if (filter === 'subscribed') { q.visibility = 'public'; q.owner = { $in: (user.subscribedTo || []) }; }
+    else if (filter === 'public') q.visibility = 'public';
+    else if (filter === 'notes') { q.kind = 'note'; q.$or = [{ visibility: 'public' }, { owner: user._id }]; }
+    else if (filter === 'other') { q.kind = 'other'; q.$or = [{ visibility: 'public' }, { owner: user._id }]; }
+    else q.$or = [{ visibility: 'public' }, { owner: user._id }];
 
     if (query) {
       const rx = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       q.$and = (q.$and || []).concat([{
         $or: [
           { chapterName: rx }, { subject: rx }, { writer: rx },
-          { description: rx }, { ownerUsername: rx },
-          { tags: rx }
+          { description: rx }, { ownerUsername: rx }, { tags: rx }
         ]
       }]);
     }
@@ -2233,9 +2317,8 @@ app.get('/gallery', requireAuth, async (req, res, next) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Routes — auth
+ * Auth routes
  * ------------------------------------------------------------------ */
-
 app.get('/register', (req, res) => {
   if (req.user) return res.redirect('/');
   res.send(renderRegister({}));
@@ -2277,10 +2360,7 @@ app.post('/register', async (req, res, next) => {
       return res.status(409).send(renderRegister({ error: msg, values }));
     }
 
-    await User.create({
-      name, email, username,
-      passwordHash: hashPassword(password)
-    });
+    await User.create({ name, email, username, passwordHash: hashPassword(password) });
 
     req.session.registered = true;
     req.session.save((err) => {
@@ -2347,15 +2427,14 @@ app.get('/logout', (req, res) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Routes — upload (both tabs use this same endpoint)
+ * Upload route
  * ------------------------------------------------------------------ */
-
 app.get('/upload', requireAuth, (req, res) => {
   const tab = req.query.tab === 'other' ? 'other' : 'notes';
   res.send(renderUpload({ user: req.user, values: {}, activeTab: tab }));
 });
 
-app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) => {
+app.post('/upload', requireAuth, handleFileUpload('file'), async (req, res, next) => {
   const kind = (req.body && req.body.kind === 'other') ? 'other' : 'note';
   const activeTab = kind === 'other' ? 'other' : 'notes';
 
@@ -2374,11 +2453,9 @@ app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) =>
       tag1: body.tag1, tag2: body.tag2, tag3: body.tag3
     };
 
-    const fail = (message, status) => {
-      return res.status(status).send(renderUpload({
-        user, error: message, values: baseValues, activeTab
-      }));
-    };
+    const fail = (message, status) => res.status(status).send(renderUpload({
+      user, error: message, values: baseValues, activeTab
+    }));
 
     if (!req.file) return fail('Please choose a file to upload.', 400);
     if (!writer) return fail('Please enter your name.', 400);
@@ -2435,14 +2512,7 @@ app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) =>
     await File.create({
       owner: user._id,
       ownerUsername: user.username,
-      kind,
-      chapterNo,
-      chapterName,
-      subject,
-      writer,
-      description,
-      tags,
-      visibility,
+      kind, chapterNo, chapterName, subject, writer, description, tags, visibility,
       originalName: normalizedName,
       storedName: result.public_id,
       fileUrl: result.secure_url,
@@ -2454,15 +2524,14 @@ app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) =>
 
     res.redirect('/?upload=success');
   } catch (err) {
-    console.error('[biologynotes] Cloudinary upload failed:', err);
+    console.error('[biologynotes] upload failed:', err);
     next(err);
   }
 });
 
 /* ------------------------------------------------------------------ *
- * Routes — edit file
+ * File edit routes — now with optional file replacement
  * ------------------------------------------------------------------ */
-
 app.get('/files/:id/edit', requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -2480,7 +2549,7 @@ app.get('/files/:id/edit', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.post('/files/:id/edit', requireAuth, async (req, res, next) => {
+app.post('/files/:id/edit', requireAuth, handleFileUpload('newFile'), async (req, res, next) => {
   try {
     const id = req.params.id;
     if (!isValidObjectId(id)) {
@@ -2503,16 +2572,13 @@ app.post('/files/:id/edit', requireAuth, async (req, res, next) => {
 
     const values = {
       chapterName, writer, description, visibility,
-      chapterNo: body.chapterNo,
-      subject: body.subject,
+      chapterNo: body.chapterNo, subject: body.subject,
       tag1: body.tag1, tag2: body.tag2, tag3: body.tag3
     };
 
-    const fail = (message, status) => {
-      return res.status(status).send(renderFileEdit({
-        user: req.user, record, error: message, values
-      }));
-    };
+    const fail = (message, status) => res.status(status).send(renderFileEdit({
+      user: req.user, record, error: message, values
+    }));
 
     if (!chapterName) return fail('Title / Chapter name is required.', 400);
     if (!writer) return fail('Writer name is required.', 400);
@@ -2532,7 +2598,6 @@ app.post('/files/:id/edit', requireAuth, async (req, res, next) => {
       const rawTags = [body.tag1, body.tag2, body.tag3]
         .map((t) => String(t || '').trim().replace(/^#+/, '').trim())
         .filter(Boolean);
-
       const seen = new Set();
       const tags = [];
       for (const t of rawTags) {
@@ -2550,17 +2615,52 @@ app.post('/files/:id/edit', requireAuth, async (req, res, next) => {
     record.description = description;
     record.visibility = visibility;
 
+    // ===== Optional file replacement =====
+    if (req.file) {
+      if (req.file.size > MAX_FILE_SIZE) {
+        return fail('Replacement file is too large. The maximum allowed size is 100 MB.', 413);
+      }
+
+      // 1. Delete old asset from Cloudinary
+      try {
+        await deleteFromCloudinary(record.storedName, record.resourceType);
+      } catch (err) {
+        console.warn('[biologynotes] could not delete old Cloudinary asset during edit:', err.message);
+      }
+
+      // 2. Upload new asset
+      const result = await uploadBufferToCloudinary(req.file.buffer, req.file.originalname);
+      const normalizedName = normalizeOriginalName(req.file.originalname);
+      const pseudoRecord = {
+        mimeType: req.file.mimetype || 'application/octet-stream',
+        originalName: normalizedName,
+        storedName: result.public_id
+      };
+      const thumbnailUrl = buildA4ThumbnailUrl(pseudoRecord);
+
+      // 3. Update record
+      record.originalName = normalizedName;
+      record.storedName = result.public_id;
+      record.fileUrl = result.secure_url;
+      record.resourceType = result.resource_type || 'image';
+      record.thumbnailUrl = thumbnailUrl || '';
+      record.size = result.bytes || req.file.size;
+      record.mimeType = pseudoRecord.mimeType;
+    }
+
     await record.save();
 
     return res.redirect('/files/' + encodeURIComponent(id) + '?updated=success');
-  } catch (err) { next(err); }
+  } catch (err) {
+    console.error('[biologynotes] file edit failed:', err);
+    next(err);
+  }
 });
 
 /* ------------------------------------------------------------------ *
- * Routes — profile avatar
+ * Avatar routes
  * ------------------------------------------------------------------ */
-
-app.post('/profile/avatar', requireAuth, uploadSingle('avatar'), async (req, res, next) => {
+app.post('/profile/avatar', requireAuth, handleAvatarUpload, async (req, res, next) => {
   try {
     if (!req.file) {
       return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent('Please choose an image.'));
@@ -2574,9 +2674,7 @@ app.post('/profile/avatar', requireAuth, uploadSingle('avatar'), async (req, res
     }
 
     const result = await uploadBufferToCloudinary(
-      req.file.buffer,
-      req.file.originalname,
-      'biologynotes/avatars'
+      req.file.buffer, req.file.originalname, 'biologynotes/avatars'
     );
 
     await User.updateOne(
@@ -2605,9 +2703,155 @@ app.post('/profile/avatar/remove', requireAuth, async (req, res, next) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Routes — file detail / raw / download / rate / delete
+ * Profile edit + delete account
  * ------------------------------------------------------------------ */
+app.get('/profile/edit', requireAuth, (req, res) => {
+  res.send(renderProfileEdit({
+    user: req.user,
+    notice: req.query.updated ? 'Your profile was updated successfully.' : ''
+  }));
+});
 
+app.post('/profile/edit', requireAuth, async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) return res.redirect('/login');
+
+    const body = req.body || {};
+    const name = String(body.name || '').trim();
+    const email = String(body.email || '').trim().toLowerCase();
+    const username = String(body.username || '').trim();
+    const currentPassword = String(body.currentPassword || '');
+    const newPassword = String(body.newPassword || '');
+    const confirmPassword = String(body.confirmPassword || '');
+
+    const values = { name, email, username };
+
+    const fail = (message, status) => res.status(status || 400).send(renderProfileEdit({
+      user: req.user, error: message, values
+    }));
+
+    if (!name || !email || !username) return fail('Name, email, and username are required.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Please enter a valid email address.');
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return fail('Username must be 3–20 characters — letters, numbers, or underscores only.');
+    if (name.length > 80) return fail('Name is too long.');
+
+    // Uniqueness check (excluding self)
+    const dupe = await User.findOne({
+      _id: { $ne: user._id },
+      $or: [
+        { username: new RegExp('^' + username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') },
+        { email }
+      ]
+    }).lean();
+
+    if (dupe) {
+      const msg = String(dupe.username).toLowerCase() === username.toLowerCase()
+        ? 'That username is already taken.'
+        : 'That email address is already registered.';
+      return fail(msg, 409);
+    }
+
+    // Password change (optional)
+    if (newPassword || confirmPassword || currentPassword) {
+      if (!currentPassword) return fail('Please enter your current password to change it.');
+      if (!verifyPassword(currentPassword, user.passwordHash)) return fail('Current password is incorrect.', 401);
+      if (!newPassword) return fail('Please enter a new password.');
+      if (newPassword.length < 6) return fail('New password must be at least 6 characters long.');
+      if (newPassword !== confirmPassword) return fail('New passwords do not match.');
+      user.passwordHash = hashPassword(newPassword);
+    }
+
+    user.name = name;
+    user.email = email;
+
+    // If username changed, we must also update all File.ownerUsername records.
+    const usernameChanged = user.username.toLowerCase() !== username.toLowerCase();
+    if (usernameChanged) {
+      user.username = username;
+    }
+
+    await user.save();
+
+    if (usernameChanged) {
+      await File.updateMany({ owner: user._id }, { $set: { ownerUsername: username } });
+    }
+
+    // Refresh session-bound user data is automatic (req.user middleware reads DB each request).
+    return res.redirect('/profile/edit?updated=1');
+  } catch (err) {
+    if (err && err.code === 11000) {
+      return res.status(409).send(renderProfileEdit({
+        user: req.user,
+        error: 'That username or email is already registered.',
+        values: req.body || {}
+      }));
+    }
+    next(err);
+  }
+});
+
+/**
+ * Delete account:
+ *  - Remove the user's avatar from Cloudinary
+ *  - Remove every file the user owns from Cloudinary
+ *  - Delete every File document owned by the user
+ *  - Pull the user from all other users' subscribers / subscribedTo
+ *  - Delete the User document
+ *  - Destroy the session
+ */
+app.post('/profile/delete', requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+
+    // 1. Delete avatar from Cloudinary
+    if (req.user.avatarPublicId) {
+      await deleteFromCloudinary(req.user.avatarPublicId, 'image');
+    }
+
+    // 2. Fetch the user's files to delete from Cloudinary + DB
+    const userFiles = await File.find({ owner: userId }).lean();
+    for (const f of userFiles) {
+      try {
+        await deleteFromCloudinary(f.storedName, f.resourceType);
+      } catch (err) {
+        console.warn('[biologynotes] delete account: could not delete asset', f.storedName, '-', err.message);
+      }
+    }
+    await File.deleteMany({ owner: userId });
+
+    // 3. Pull user from other users' subscriber lists
+    await User.updateMany(
+      { subscribers: userId },
+      { $pull: { subscribers: userId } }
+    );
+    await User.updateMany(
+      { subscribedTo: userId },
+      { $pull: { subscribedTo: userId } }
+    );
+
+    // 4. Delete user
+    await User.deleteOne({ _id: userId });
+
+    // 5. Destroy session and clear cookie
+    if (req.session) {
+      req.session.destroy(() => {
+        res.clearCookie('bn.sid');
+        return res.redirect('/login?accountDeleted=1');
+      });
+    } else {
+      res.clearCookie('bn.sid');
+      return res.redirect('/login?accountDeleted=1');
+    }
+  } catch (err) {
+    console.error('[biologynotes] delete account failed:', err);
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * File view / raw / download / rate / delete
+ * ------------------------------------------------------------------ */
 async function findAccessibleFile(req, id) {
   if (!isValidObjectId(id)) return { error: 'notfound' };
   const record = await File.findById(id).lean();
@@ -2678,7 +2922,6 @@ app.post('/files/:id/delete', requireAuth, async (req, res, next) => {
     if (!isValidObjectId(id)) {
       return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
     }
-
     const record = await File.findById(id).lean();
     if (!record) {
       return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
@@ -2731,9 +2974,8 @@ app.post('/files/:id/rate', requireAuth, async (req, res, next) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Routes — users & subscriptions
+ * Users
  * ------------------------------------------------------------------ */
-
 app.get('/users/:username', requireAuth, async (req, res, next) => {
   try {
     const viewer = req.user;
@@ -2757,13 +2999,9 @@ app.get('/users/:username', requireAuth, async (req, res, next) => {
     const avatarError = typeof req.query.avatarError === 'string' ? req.query.avatarError : '';
 
     res.send(renderUserProfile({
-      viewer,
-      profileUser,
-      records,
+      viewer, profileUser, records,
       subscribed: isSubscribed(viewer, profileUser._id),
-      isSelf,
-      avatarNotice,
-      avatarError
+      isSelf, avatarNotice, avatarError
     }));
   } catch (err) { next(err); }
 });
@@ -2798,7 +3036,6 @@ app.post('/users/:id/subscribe', requireAuth, async (req, res, next) => {
 /* ------------------------------------------------------------------ *
  * Fallbacks
  * ------------------------------------------------------------------ */
-
 app.use((req, res) => {
   res.status(404).send(renderErrorPage(404, 'Not found', 'The page you requested could not be found.'));
 });
@@ -2812,7 +3049,6 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 /* ------------------------------------------------------------------ *
  * Start
  * ------------------------------------------------------------------ */
-
 async function start() {
   try {
     await mongoose.connect(MONGO_URI, {
@@ -2829,7 +3065,6 @@ async function start() {
       console.log('[biologynotes] Running at http://localhost:' + PORT);
       console.log('[biologynotes] Environment: ' + NODE_ENV);
       console.log('[biologynotes] Storage: Cloudinary (' + CLOUDINARY_CLOUD_NAME + ')');
-      console.log('[biologynotes] A4 thumbnails: ' + A4_THUMB_W + 'x' + A4_THUMB_H);
       console.log('[biologynotes] Max upload size: ' + formatBytes(MAX_FILE_SIZE));
     });
 
@@ -2846,9 +3081,6 @@ async function start() {
   } catch (err) {
     console.error('\n[biologynotes] Failed to connect to MongoDB.\n');
     console.error('Error:', err.message);
-    console.error('\nCheck that (1) your Atlas cluster is not paused,');
-    console.error('(2) your IP is whitelisted in Network Access,');
-    console.error('(3) your DNS can resolve SRV records.\n');
     process.exit(1);
   }
 }
