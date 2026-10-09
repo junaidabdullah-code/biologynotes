@@ -6,9 +6,9 @@
  * Typography: Playfair Display · Merriweather · Poppins
  * Icons: Font Awesome 6
  * Storage: Cloudinary (works on Render free tier)
- * Thumbnails: A4 aspect-ratio (210:297) generated via Cloudinary transformations
- * Features: auth, notes + other uploads with tags, ratings, subscriptions, delete,
- *           edit file (with optional replacement), edit profile, delete account, share, avatars
+ * Features: auth (+ guest mode), notes + other uploads with tags, ratings, subscriptions,
+ *           delete, edit file (with optional replacement), edit profile, delete account,
+ *           comments, share, avatars
  *
  * Run with: node server.js
  */
@@ -103,6 +103,7 @@ const MAX_AVATAR_SIZE = 4 * 1024 * 1024;
 const A4_THUMB_W = 620;
 const A4_THUMB_H = 877;
 const MAX_TAGS = 3;
+const MAX_COMMENT_LEN = 1000;
 
 /* ------------------------------------------------------------------ *
  * Favicon + Google verification
@@ -159,6 +160,17 @@ const ratingSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const commentSchema = new mongoose.Schema(
+  {
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    username: { type: String, required: true },
+    name: { type: String, required: true },
+    avatarUrl: { type: String, default: '' },
+    text: { type: String, required: true, maxlength: MAX_COMMENT_LEN },
+    createdAt: { type: Date, default: Date.now }
+  }
+);
+
 const fileSchema = new mongoose.Schema(
   {
     owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -180,7 +192,8 @@ const fileSchema = new mongoose.Schema(
     mimeType: { type: String, default: 'application/octet-stream' },
     downloads: { type: Number, default: 0 },
     views: { type: Number, default: 0 },
-    ratings: [ratingSchema]
+    ratings: [ratingSchema],
+    comments: [commentSchema]
   },
   { timestamps: true }
 );
@@ -244,6 +257,25 @@ function formatDate(ts) {
   }
 }
 
+function timeAgo(ts) {
+  try {
+    const diff = Date.now() - new Date(ts).getTime();
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return 'just now';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min + 'm ago';
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr + 'h ago';
+    const day = Math.floor(hr / 24);
+    if (day < 30) return day + 'd ago';
+    const mo = Math.floor(day / 30);
+    if (mo < 12) return mo + 'mo ago';
+    return Math.floor(mo / 12) + 'y ago';
+  } catch (err) {
+    return '';
+  }
+}
+
 function normalizeOriginalName(name) {
   try {
     return Buffer.from(String(name), 'latin1').toString('utf8');
@@ -296,7 +328,7 @@ function averageRating(file) {
 }
 
 function userRating(file, userId) {
-  if (!file.ratings || !file.ratings.length) return 0;
+  if (!file.ratings || !file.ratings.length || !userId) return 0;
   const uid = String(userId);
   const found = file.ratings.find((r) => String(r.user) === uid);
   return found ? found.value : 0;
@@ -471,18 +503,9 @@ const FA_LINK =
 const CSS = `
 *,*::before,*::after{box-sizing:border-box;border-radius:0}
 html,body{margin:0;padding:0}
-body{
-  font-family:'Merriweather', Georgia, 'Times New Roman', serif;
-  background:#fafafa;color:#18181b;font-size:15px;line-height:1.65;
-  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
-}
-.ui,button,input,select,textarea,.btn,.label,.nav-link,.badge,.chip,.topnav,.toolbar,.stat,.file-stats,.user-meta,.user-name,.card-meta,.tag{
-  font-family:'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-}
-h1,h2,h3,h4,.display,.file-title,.chapter-title,.brand,.rating-avg{
-  font-family:'Playfair Display', Georgia, serif;
-  letter-spacing:-.01em;
-}
+body{font-family:'Merriweather', Georgia, 'Times New Roman', serif;background:#fafafa;color:#18181b;font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.ui,button,input,select,textarea,.btn,.label,.nav-link,.badge,.chip,.topnav,.toolbar,.stat,.file-stats,.user-meta,.user-name,.card-meta,.tag{font-family:'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif}
+h1,h2,h3,h4,.display,.file-title,.chapter-title,.brand,.rating-avg{font-family:'Playfair Display', Georgia, serif;letter-spacing:-.01em}
 a{color:inherit;text-decoration:none}
 button{font-family:inherit}
 .container{max-width:1240px;margin:0 auto;padding:28px 20px 80px}
@@ -516,6 +539,7 @@ p{margin:0}
 .avatar{background:#18181b;color:#fafafa;display:flex;align-items:center;justify-content:center;font-weight:600;flex:0 0 auto;font-family:'Playfair Display', serif;overflow:hidden}
 .avatar-sm{background:#18181b;color:#fafafa;display:flex;align-items:center;justify-content:center;font-weight:600;flex:0 0 auto;font-family:'Playfair Display',serif;overflow:hidden}
 .avatar-img{border:1px solid #e4e4e7}
+.guest-badge{width:22px;height:22px;background:#e4e4e7;color:#52525b;display:flex;align-items:center;justify-content:center;font-size:11px;flex:0 0 auto}
 
 .field{display:flex;flex-direction:column;gap:7px;margin-bottom:18px}
 .label{font-size:12.5px;font-weight:500;color:#3f3f46;letter-spacing:.01em}
@@ -550,17 +574,25 @@ p{margin:0}
 .alert-error{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
 .alert-success{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
 .alert-warning{background:#fefce8;border-color:#fde68a;color:#854d0e}
+.alert-info{background:#f0f9ff;border-color:#bae6fd;color:#075985}
 
 .auth-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 64px);padding:40px 20px}
 .auth-card{width:100%;max-width:440px;background:#fff;border:1px solid #e4e4e7;padding:32px;box-shadow:0 1px 3px rgba(24,24,27,.05)}
 .auth-brand{margin-bottom:26px;display:flex;flex-direction:column;align-items:center;gap:14px}
 .foot-note{text-align:center;color:#71717a;font-size:13.5px;margin-top:20px;font-family:'Poppins',sans-serif}
 .foot-note a{color:#18181b;font-weight:500;text-decoration:underline;text-underline-offset:3px}
+.auth-divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:#a1a1aa;font-family:'Poppins',sans-serif;font-size:11.5px;letter-spacing:.15em;text-transform:uppercase}
+.auth-divider::before,.auth-divider::after{content:'';flex:1;height:1px;background:#e4e4e7}
 
 .banner{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;background:#fff;border:1px solid #e4e4e7;padding:20px 22px;margin-bottom:22px;box-shadow:0 1px 2px rgba(24,24,27,.04)}
 .user-info{display:flex;align-items:center;gap:14px;min-width:0}
 .user-name{font-weight:600;font-size:17px;letter-spacing:-.01em;font-family:'Playfair Display', serif}
 .user-meta{color:#71717a;font-size:12.5px;word-break:break-word;font-family:'Poppins',sans-serif}
+
+.guest-banner{background:#f0f9ff;border:1px solid #bae6fd;padding:14px 18px;margin-bottom:22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-family:'Poppins',sans-serif;font-size:13.5px;color:#075985}
+.guest-banner i{font-size:16px;color:#0284c7}
+.guest-banner-text{flex:1;min-width:0}
+.guest-banner-actions{display:flex;gap:8px;flex-wrap:wrap}
 
 .toolbar{background:#fff;border:1px solid #e4e4e7;padding:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:22px}
 .toolbar .input{flex:1 1 240px;height:38px;padding:8px 12px 8px 36px;font-size:13.5px;background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:12px center}
@@ -598,6 +630,7 @@ p{margin:0}
 
 .preview .type-badge{position:absolute;top:12px;left:12px;background:rgba(24,24,27,.88);color:#fafafa;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px);z-index:2}
 .preview .vis-badge{position:absolute;bottom:12px;right:12px;background:rgba(255,255,255,.95);color:#18181b;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;border:1px solid #e4e4e7;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px);z-index:2}
+.preview .comment-count-badge{position:absolute;bottom:12px;left:12px;background:rgba(24,24,27,.88);color:#fafafa;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px);z-index:2;display:inline-flex;align-items:center;gap:4px}
 
 .ribbon{position:absolute;top:0;right:0;z-index:3;background:#facc15;color:#18181b;font-family:'Poppins',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.14em;padding:7px 12px;text-transform:uppercase;box-shadow:0 2px 6px rgba(24,24,27,.18);display:inline-flex;align-items:center;gap:5px}
 .ribbon i{font-size:10px}
@@ -757,6 +790,42 @@ p{margin:0}
 .uploader-stats span{display:inline-flex;align-items:center;gap:6px}
 .uploader-stats i{font-size:11.5px;color:#a1a1aa}
 
+/* Comments */
+.comments-card{background:#fff;border:1px solid #e4e4e7;padding:22px;margin-top:22px}
+.comments-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #f4f4f5}
+.comments-head h2{font-size:17px;display:flex;align-items:center;gap:10px}
+.comments-head h2 i{font-size:15px;color:#a1a1aa}
+.comments-head .comment-count-pill{background:#f4f4f5;color:#3f3f46;border:1px solid #e4e4e7;font-family:'Poppins',sans-serif;font-size:11.5px;font-weight:600;padding:3px 9px;letter-spacing:.04em}
+
+.comment-form{display:flex;flex-direction:column;gap:10px;margin-bottom:22px}
+.comment-form textarea{min-height:90px}
+.comment-form-actions{display:flex;justify-content:flex-end;gap:10px}
+
+.comment-list{display:flex;flex-direction:column;gap:0}
+.comment{display:flex;gap:12px;padding:14px 0;border-top:1px solid #f4f4f5}
+.comment:first-child{border-top:0;padding-top:0}
+.comment-avatar-wrap{flex:0 0 auto}
+.comment-body{flex:1;min-width:0}
+.comment-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:5px}
+.comment-author{font-family:'Poppins',sans-serif;font-size:13.5px;font-weight:600;color:#18181b}
+.comment-author a:hover{text-decoration:underline;text-underline-offset:2px}
+.comment-time{font-family:'Poppins',sans-serif;font-size:11.5px;color:#a1a1aa}
+.comment-text{font-family:'Merriweather',serif;font-size:14px;line-height:1.6;color:#3f3f46;white-space:pre-wrap;word-wrap:break-word}
+.comment-actions{margin-left:auto;display:flex;gap:6px}
+.comment-delete{background:none;border:0;padding:4px;color:#a1a1aa;cursor:pointer;font-size:12px;transition:color .15s ease}
+.comment-delete:hover{color:#b91c1c}
+.comments-empty{text-align:center;padding:30px 20px;color:#71717a;font-family:'Poppins',sans-serif;font-size:13.5px}
+.comments-empty i{display:block;font-size:32px;color:#d4d4d8;margin-bottom:10px}
+
+.comment-signin-prompt{background:#f0f9ff;border:1px solid #bae6fd;padding:16px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-family:'Poppins',sans-serif;font-size:13.5px;color:#075985;margin-bottom:22px}
+.comment-signin-prompt i{font-size:16px;color:#0284c7}
+
+/* Profile manage */
+.profile-manage-card{background:#fff;border:1px solid #e4e4e7;padding:20px;margin-bottom:22px}
+.profile-manage-title{font-family:'Playfair Display',serif;font-size:16px;font-weight:600;letter-spacing:-.005em;margin:0 0 6px;color:#18181b}
+.profile-manage-desc{font-family:'Poppins',sans-serif;font-size:12.5px;color:#71717a;margin:0 0 14px}
+.profile-manage-actions{display:flex;gap:10px;flex-wrap:wrap}
+
 .avatar-card{background:#fff;border:1px solid #e4e4e7;padding:20px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-bottom:22px}
 .avatar-card-img{width:88px;height:88px;overflow:hidden;background:#18181b;color:#fafafa;display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:32px;font-weight:600;flex:0 0 auto}
 .avatar-card-img img{width:100%;height:100%;object-fit:cover;display:block}
@@ -768,12 +837,6 @@ p{margin:0}
 .avatar-file-input::file-selector-button{font-family:'Poppins',sans-serif;font-size:12.5px;font-weight:500;height:32px;padding:0 11px;margin-right:10px;background:#fff;color:#18181b;border:1px solid #e4e4e7;cursor:pointer;transition:background-color .15s ease,border-color .15s ease}
 .avatar-file-input::file-selector-button:hover{background:#f4f4f5;border-color:#d4d4d8}
 
-/* Profile manage card */
-.profile-manage-card{background:#fff;border:1px solid #e4e4e7;padding:20px;margin-bottom:22px}
-.profile-manage-title{font-family:'Playfair Display',serif;font-size:16px;font-weight:600;letter-spacing:-.005em;margin:0 0 6px;color:#18181b}
-.profile-manage-desc{font-family:'Poppins',sans-serif;font-size:12.5px;color:#71717a;margin:0 0 14px}
-.profile-manage-actions{display:flex;gap:10px;flex-wrap:wrap}
-
 .error-page{text-align:center;padding:72px 26px}
 .error-page h1{font-size:64px;margin-bottom:6px;font-family:'Playfair Display',serif;font-weight:700}
 .error-page p{color:#71717a;margin:0 0 24px}
@@ -783,12 +846,11 @@ p{margin:0}
 .inline-form{display:inline}
 .text-muted{color:#71717a}
 .text-strong{color:#18181b;font-weight:500}
+.form-divider{height:1px;background:#f4f4f5;margin:22px 0;border:0}
 
 .upload-header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap}
 .upload-header .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#a1a1aa;font-weight:600;font-family:'Poppins',sans-serif;margin-bottom:4px}
 .upload-header h1{font-size:28px}
-
-.form-divider{height:1px;background:#f4f4f5;margin:22px 0;border:0}
 
 /* Confirm modal */
 .modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(24,24,27,.55);display:flex;align-items:center;justify-content:center;padding:20px;animation:bnFadeIn .15s ease}
@@ -827,6 +889,8 @@ p{margin:0}
   .tab{padding:11px 14px;font-size:12.5px}
   .modal{padding:20px}
   .modal-actions .btn{min-width:0;flex:1}
+  .comments-card{padding:16px}
+  .comment{padding:12px 0}
 }
 `;
 
@@ -926,24 +990,33 @@ function brandMark() {
   return '<div class="brand"><a href="/"><span class="brand-mark"><i class="fa-solid fa-dna"></i></span><span>BiologyNotes</span></a></div>';
 }
 
-function renderTopNav(user, active) {
+function renderTopNav(user, active, isGuest) {
   const isActive = (name) => (active === name ? ' active' : '');
   const authed = !!user;
+  const guest = !!isGuest;
+
   return '' +
     '<header class="topnav"><div class="topnav-inner">' +
     brandMark() +
-    (authed
+    ((authed || guest)
       ? '<nav class="nav-links">' +
           '<a class="nav-link' + isActive('dashboard') + '" href="/"><i class="fa-solid fa-gauge-high"></i>Dashboard</a>' +
           '<a class="nav-link' + isActive('gallery') + '" href="/gallery"><i class="fa-solid fa-compass"></i>Gallery</a>' +
-          '<a class="nav-link' + isActive('upload') + '" href="/upload"><i class="fa-solid fa-cloud-arrow-up"></i>Upload</a>' +
+          (authed ? '<a class="nav-link' + isActive('upload') + '" href="/upload"><i class="fa-solid fa-cloud-arrow-up"></i>Upload</a>' : '') +
         '</nav>' +
         '<div class="nav-right">' +
-          '<a class="btn btn-outline btn-xs" href="/users/' + encodeURIComponent(user.username) + '">' +
-            renderAvatar(user, 22) + '<span>@' + escapeHtml(user.username) + '</span>' +
-          '</a>' +
-          '<a class="btn btn-primary btn-xs" href="/upload"><i class="fa-solid fa-plus"></i>Upload</a>' +
-          '<a class="btn btn-ghost btn-xs" href="/logout" title="Logout"><i class="fa-solid fa-right-from-bracket"></i></a>' +
+          (authed
+            ? '<a class="btn btn-outline btn-xs" href="/users/' + encodeURIComponent(user.username) + '">' +
+                renderAvatar(user, 22) + '<span>@' + escapeHtml(user.username) + '</span>' +
+              '</a>' +
+              '<a class="btn btn-primary btn-xs" href="/upload"><i class="fa-solid fa-plus"></i>Upload</a>' +
+              '<a class="btn btn-ghost btn-xs" href="/logout" title="Logout"><i class="fa-solid fa-right-from-bracket"></i></a>'
+            : '<span class="btn btn-ghost btn-xs" style="cursor:default" title="Guest mode">' +
+                '<span class="guest-badge"><i class="fa-solid fa-user-secret"></i></span>Guest' +
+              '</span>' +
+              '<a class="btn btn-outline btn-xs" href="/login"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in</a>' +
+              '<a class="btn btn-primary btn-xs" href="/register"><i class="fa-solid fa-user-plus"></i>Create account</a>'
+          ) +
         '</div>'
       : '<div class="nav-right">' +
           '<a class="btn btn-outline btn-xs" href="/login"><i class="fa-solid fa-arrow-right-to-bracket"></i>Login</a>' +
@@ -956,15 +1029,16 @@ function renderTopNav(user, active) {
  * Auth pages
  * ------------------------------------------------------------------ */
 function renderRegister(ctx) {
-  const { error = '', values = {} } = ctx || {};
+  const { error = '', values = {}, info = '' } = ctx || {};
   const body = '' +
-    renderTopNav(null, 'register') +
+    renderTopNav(null, 'register', false) +
     '<div class="auth-wrap"><div class="auth-card">' +
       '<div class="auth-brand">' +
         '<div class="brand-mark" style="width:48px;height:48px"><i class="fa-solid fa-dna" style="font-size:22px"></i></div>' +
         '<h1 style="font-size:26px;margin:0">Create your account</h1>' +
-        '<p class="sub" style="margin:0;text-align:center">Register to start uploading, rating, and subscribing.</p>' +
+        '<p class="sub" style="margin:0;text-align:center">Register to upload, rate, comment, and subscribe.</p>' +
       '</div>' +
+      (info ? '<div class="alert alert-info"><i class="fa-solid fa-circle-info"></i><span>' + escapeHtml(info) + '</span></div>' : '') +
       (error ? '<div class="alert alert-error"><i class="fa-solid fa-circle-exclamation"></i><span>' + escapeHtml(error) + '</span></div>' : '') +
       '<form method="POST" action="/register">' +
         '<div class="field"><label class="label" for="f-name">Full name</label>' +
@@ -977,21 +1051,32 @@ function renderRegister(ctx) {
           '<input class="input" id="f-password" name="password" type="password" placeholder="At least 6 characters" required autocomplete="new-password" minlength="6"></div>' +
         '<button type="submit" class="btn btn-primary btn-block btn-lg"><i class="fa-solid fa-user-plus"></i>Create account</button>' +
       '</form>' +
+
+      '<div class="auth-divider">or</div>' +
+
+      '<form method="POST" action="/guest">' +
+        '<button type="submit" class="btn btn-outline btn-block btn-lg">' +
+          '<i class="fa-solid fa-user-secret"></i>Continue as Guest' +
+        '</button>' +
+      '</form>' +
+      '<p class="foot-note" style="margin-top:12px;font-size:12.5px">Guests can browse public files, download, and share — but cannot rate, comment, or upload.</p>' +
+
       '<p class="foot-note">Already registered? <a href="/login">Sign in</a></p>' +
     '</div></div>';
   return layout('Register · BiologyNotes', body);
 }
 
 function renderLogin(ctx) {
-  const { error = '', values = {} } = ctx || {};
+  const { error = '', values = {}, info = '' } = ctx || {};
   const body = '' +
-    renderTopNav(null, 'login') +
+    renderTopNav(null, 'login', false) +
     '<div class="auth-wrap"><div class="auth-card">' +
       '<div class="auth-brand">' +
         '<div class="brand-mark" style="width:48px;height:48px"><i class="fa-solid fa-dna" style="font-size:22px"></i></div>' +
         '<h1 style="font-size:26px;margin:0">Welcome back</h1>' +
         '<p class="sub" style="margin:0;text-align:center">Sign in to access your dashboard and files.</p>' +
       '</div>' +
+      (info ? '<div class="alert alert-info"><i class="fa-solid fa-circle-info"></i><span>' + escapeHtml(info) + '</span></div>' : '') +
       (error ? '<div class="alert alert-error"><i class="fa-solid fa-circle-exclamation"></i><span>' + escapeHtml(error) + '</span></div>' : '') +
       '<form method="POST" action="/login">' +
         '<div class="field"><label class="label" for="f-username">Username</label>' +
@@ -1000,6 +1085,16 @@ function renderLogin(ctx) {
           '<input class="input" id="f-password" name="password" type="password" placeholder="Your password" required autocomplete="current-password"></div>' +
         '<button type="submit" class="btn btn-primary btn-block btn-lg"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in</button>' +
       '</form>' +
+
+      '<div class="auth-divider">or</div>' +
+
+      '<form method="POST" action="/guest">' +
+        '<button type="submit" class="btn btn-outline btn-block btn-lg">' +
+          '<i class="fa-solid fa-user-secret"></i>Continue as Guest' +
+        '</button>' +
+      '</form>' +
+      '<p class="foot-note" style="margin-top:12px;font-size:12.5px">Guests can browse public files, download, and share — but cannot rate, comment, or upload.</p>' +
+
       '<p class="foot-note">Need an account? <a href="/register">Register</a></p>' +
     '</div></div>';
   return layout('Login · BiologyNotes', body);
@@ -1030,6 +1125,10 @@ function renderPreview(record) {
   const isNote = record.kind === 'note';
   const typeBadge = '<span class="type-badge">' + kindLabel(kind) + '</span>';
   const visBadge = '<span class="vis-badge">' + (record.visibility === 'public' ? 'PUBLIC' : 'PRIVATE') + '</span>';
+  const commentCount = (record.comments && record.comments.length) || 0;
+  const commentBadge = commentCount > 0
+    ? '<span class="comment-count-badge"><i class="fa-regular fa-comment"></i>' + commentCount + '</span>'
+    : '';
   const ribbon = isNote
     ? '<span class="ribbon"><i class="fa-solid fa-book"></i>NOTES</span>'
     : '';
@@ -1039,15 +1138,16 @@ function renderPreview(record) {
     : '';
 
   return '<a class="preview" href="' + href + '">' +
-    typeBadge + visBadge + ribbon +
+    typeBadge + visBadge + ribbon + commentBadge +
     '<div class="a4-thumb">' + renderA4ThumbInner(record, kind) + '</div>' +
     playOverlay +
     '</a>';
 }
 
-function renderCard(record, viewer) {
+function renderCard(record, viewer, isGuest) {
   const avg = averageRating(record);
   const ratingCount = record.ratings ? record.ratings.length : 0;
+  const commentCount = (record.comments && record.comments.length) || 0;
   const kind = fileKind(record.mimeType, record.originalName);
   const isNote = record.kind === 'note';
   const owner = record.owner && typeof record.owner === 'object' ? record.owner : null;
@@ -1079,7 +1179,9 @@ function renderCard(record, viewer) {
   }
 
   let actionBtn = '';
-  if (viewer && isSelf) {
+  if (isGuest) {
+    actionBtn = '<a href="/login" class="btn btn-xs btn-outline"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in</a>';
+  } else if (viewer && isSelf) {
     actionBtn =
       '<div class="owner-actions">' +
         '<a href="/files/' + encodeURIComponent(fileId) + '/edit" class="btn btn-xs btn-outline btn-icon-xs" title="Edit"><i class="fa-solid fa-pen"></i></a>' +
@@ -1104,6 +1206,10 @@ function renderCard(record, viewer) {
   const stars = renderStars(avg, 11);
   const ownerAvatar = owner ? renderAvatar(owner, 28) : renderAvatar({ username: ownerHandle }, 28);
 
+  const ownerLink = isGuest
+    ? '<span style="color:#18181b;font-weight:500">@' + escapeHtml(ownerHandle) + '</span>'
+    : '<a href="/users/' + encodeURIComponent(ownerHandle) + '">@' + escapeHtml(ownerHandle) + '</a>';
+
   return '' +
     '<article class="file-card">' +
       renderPreview(record) +
@@ -1116,11 +1222,12 @@ function renderCard(record, viewer) {
           '<span class="stat stat-rating">' + stars + ' <span style="color:#18181b;font-weight:500">' + avg.toFixed(1) + '</span> <span style="color:#a1a1aa">(' + ratingCount + ')</span></span>' +
           '<span class="stat"><i class="fa-solid fa-download"></i>' + (record.downloads || 0) + '</span>' +
           '<span class="stat"><i class="fa-regular fa-eye"></i>' + (record.views || 0) + '</span>' +
+          '<span class="stat"><i class="fa-regular fa-comment"></i>' + commentCount + '</span>' +
         '</div>' +
         '<div class="file-foot">' +
           '<div class="uploader-mini">' +
             ownerAvatar +
-            '<a href="/users/' + encodeURIComponent(ownerHandle) + '">@' + escapeHtml(ownerHandle) + '</a>' +
+            ownerLink +
           '</div>' +
           actionBtn +
         '</div>' +
@@ -1133,11 +1240,12 @@ function renderCard(record, viewer) {
  * ------------------------------------------------------------------ */
 function renderListing(ctx) {
   const {
-    viewer, title, subtitle, records, activeNav,
-    filter = 'all', sort = 'recent', query = '', showFilters = true
+    viewer, isGuest, title, subtitle, records, activeNav,
+    filter = 'all', sort = 'recent', query = '', showFilters = true,
+    guestNotice = false
   } = ctx;
 
-  const cards = records.map((r) => renderCard(r, viewer)).join('');
+  const cards = records.map((r) => renderCard(r, viewer, isGuest)).join('');
 
   const main = records.length
     ? '<div class="grid">' + cards + '</div>'
@@ -1145,19 +1253,20 @@ function renderListing(ctx) {
         '<i class="fa-regular fa-folder-open"></i>' +
         '<h3>' + (query ? 'No files match your search' : 'No files yet') + '</h3>' +
         '<p>' + (query ? 'Try a different keyword or clear the filters.' : 'Upload your first file to see it appear here.') + '</p>' +
-        '<a class="btn btn-primary" href="/upload"><i class="fa-solid fa-cloud-arrow-up"></i>Upload File</a>' +
+        (isGuest ? '' : '<a class="btn btn-primary" href="/upload"><i class="fa-solid fa-cloud-arrow-up"></i>Upload File</a>') +
       '</div>';
 
-  const chips = showFilters
-    ? '<div class="chips">' +
+  let chips = '';
+  if (showFilters && !isGuest) {
+    chips = '<div class="chips">' +
         '<a class="chip' + (filter === 'all' ? ' active' : '') + '" href="/?filter=all&sort=' + encodeURIComponent(sort) + '&q=' + encodeURIComponent(query) + '"><i class="fa-solid fa-layer-group"></i>All</a>' +
         '<a class="chip' + (filter === 'notes' ? ' active' : '') + '" href="/?filter=notes&sort=' + encodeURIComponent(sort) + '&q=' + encodeURIComponent(query) + '"><i class="fa-solid fa-book"></i>Notes</a>' +
         '<a class="chip' + (filter === 'other' ? ' active' : '') + '" href="/?filter=other&sort=' + encodeURIComponent(sort) + '&q=' + encodeURIComponent(query) + '"><i class="fa-solid fa-box-open"></i>Other</a>' +
         '<a class="chip' + (filter === 'mine' ? ' active' : '') + '" href="/?filter=mine&sort=' + encodeURIComponent(sort) + '&q=' + encodeURIComponent(query) + '"><i class="fa-regular fa-user"></i>Mine</a>' +
         '<a class="chip' + (filter === 'subscribed' ? ' active' : '') + '" href="/?filter=subscribed&sort=' + encodeURIComponent(sort) + '&q=' + encodeURIComponent(query) + '"><i class="fa-solid fa-user-check"></i>Following</a>' +
         '<a class="chip' + (filter === 'public' ? ' active' : '') + '" href="/?filter=public&sort=' + encodeURIComponent(sort) + '&q=' + encodeURIComponent(query) + '"><i class="fa-solid fa-globe"></i>Public</a>' +
-      '</div>'
-    : '';
+      '</div>';
+  }
 
   const toolbar = '' +
     '<form class="toolbar" method="GET" action="' + (activeNav === 'gallery' ? '/gallery' : '/') + '">' +
@@ -1173,20 +1282,43 @@ function renderListing(ctx) {
       chips +
     '</form>';
 
+  const guestBanner = isGuest
+    ? '<div class="guest-banner">' +
+        '<i class="fa-solid fa-user-secret"></i>' +
+        '<div class="guest-banner-text">' +
+          '<b>You\'re browsing as a guest.</b> You can view public files, download, and share. ' +
+          'Sign in to upload, rate, comment, and follow other users.' +
+        '</div>' +
+        '<div class="guest-banner-actions">' +
+          '<a class="btn btn-outline btn-xs" href="/login"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in</a>' +
+          '<a class="btn btn-primary btn-xs" href="/register"><i class="fa-solid fa-user-plus"></i>Create account</a>' +
+        '</div>' +
+      '</div>'
+    : '';
+
   const body = '' +
-    renderTopNav(viewer, activeNav) +
+    renderTopNav(viewer, activeNav, isGuest) +
     '<div class="container">' +
+      guestBanner +
       '<div class="banner">' +
         '<div class="user-info">' +
-          renderAvatar(viewer, 46) +
-          '<div>' +
-            '<div class="user-name">' + escapeHtml(title) + '</div>' +
-            '<div class="user-meta">' + escapeHtml(subtitle) + '</div>' +
-          '</div>' +
+          (isGuest
+            ? '<div class="guest-badge" style="width:46px;height:46px;font-size:20px"><i class="fa-solid fa-user-secret"></i></div>' +
+              '<div>' +
+                '<div class="user-name">' + escapeHtml(title) + '</div>' +
+                '<div class="user-meta">' + escapeHtml(subtitle) + '</div>' +
+              '</div>'
+            : renderAvatar(viewer, 46) +
+              '<div>' +
+                '<div class="user-name">' + escapeHtml(title) + '</div>' +
+                '<div class="user-meta">' + escapeHtml(subtitle) + '</div>' +
+              '</div>') +
         '</div>' +
         '<div class="actions row">' +
-          '<a class="btn btn-primary" href="/upload"><i class="fa-solid fa-cloud-arrow-up"></i>Upload File</a>' +
-          '<a class="btn btn-outline" href="/gallery"><i class="fa-solid fa-compass"></i>Gallery</a>' +
+          (isGuest
+            ? '<a class="btn btn-outline" href="/gallery"><i class="fa-solid fa-compass"></i>Gallery</a>'
+            : '<a class="btn btn-primary" href="/upload"><i class="fa-solid fa-cloud-arrow-up"></i>Upload File</a>' +
+              '<a class="btn btn-outline" href="/gallery"><i class="fa-solid fa-compass"></i>Gallery</a>') +
         '</div>' +
       '</div>' +
       toolbar +
@@ -1196,28 +1328,41 @@ function renderListing(ctx) {
       '</div>' +
       main +
     '</div>';
+
   return layout('Dashboard · BiologyNotes', body);
 }
 
 function renderHome(ctx) {
-  const { user, records, notice = '', filter = 'all', sort = 'recent', query = '' } = ctx;
-  const subs = user.subscribers ? user.subscribers.length : 0;
-  const subtitle = '@' + user.username + ' · ' + user.email + ' · ' + subs + ' subscriber' + (subs === 1 ? '' : 's');
+  const { user, isGuest, records, notice = '', filter = 'all', sort = 'recent', query = '' } = ctx;
+
+  let title, subtitle;
+  if (isGuest) {
+    title = 'Guest mode';
+    subtitle = 'Browsing public files — sign in to unlock all features';
+  } else {
+    const subs = user.subscribers ? user.subscribers.length : 0;
+    title = user.name;
+    subtitle = '@' + user.username + ' · ' + user.email + ' · ' + subs + ' subscriber' + (subs === 1 ? '' : 's');
+  }
+
   const noticeHtml = notice
     ? '<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i><span>' + escapeHtml(notice) + '</span></div>'
     : '';
+
   const page = renderListing({
-    viewer: user, title: user.name, subtitle, records,
-    activeNav: 'dashboard', filter, sort, query, showFilters: true
+    viewer: user, isGuest, title, subtitle, records,
+    activeNav: 'dashboard', filter, sort, query,
+    showFilters: !isGuest
   });
   if (!notice) return page;
   return page.replace('<div class="container">', '<div class="container">' + noticeHtml);
 }
 
 function renderGallery(ctx) {
-  const { user, records, filter = 'public', sort = 'recent', query = '' } = ctx;
+  const { user, isGuest, records, filter = 'public', sort = 'recent', query = '' } = ctx;
   return renderListing({
-    viewer: user, title: 'Public Gallery',
+    viewer: user, isGuest,
+    title: 'Public Gallery',
     subtitle: 'Browse every public file shared across BiologyNotes.',
     records, activeNav: 'gallery', filter, sort, query, showFilters: false
   });
@@ -1232,7 +1377,7 @@ function renderUpload(ctx) {
   const safeActiveTab = activeTab === 'other' ? 'other' : 'notes';
 
   const body = '' +
-    renderTopNav(user, 'upload') +
+    renderTopNav(user, 'upload', false) +
     '<div class="container">' +
       '<div class="banner">' +
         '<div class="user-info">' +
@@ -1268,7 +1413,6 @@ function renderUpload(ctx) {
         '<div class="tab-panel' + (safeActiveTab === 'notes' ? ' active' : '') + '" id="panel-notes">' +
           '<form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form-notes">' +
             '<input type="hidden" name="kind" value="note">' +
-
             '<div class="field">' +
               '<label class="label" for="notes-file">File</label>' +
               '<div class="dropzone" id="notes-dropzone" tabindex="0" role="button" aria-label="Upload a note file">' +
@@ -1329,7 +1473,6 @@ function renderUpload(ctx) {
         '<div class="tab-panel' + (safeActiveTab === 'other' ? ' active' : '') + '" id="panel-other">' +
           '<form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form-other">' +
             '<input type="hidden" name="kind" value="other">' +
-
             '<div class="field">' +
               '<label class="label" for="other-file">File</label>' +
               '<div class="dropzone" id="other-dropzone" tabindex="0" role="button" aria-label="Upload any file">' +
@@ -1466,21 +1609,96 @@ function renderShareCard() {
 }
 
 /* ------------------------------------------------------------------ *
+ * Comments renderer
+ * ------------------------------------------------------------------ */
+function renderCommentsSection(record, viewer, isGuest) {
+  const comments = Array.isArray(record.comments) ? record.comments.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) : [];
+  const count = comments.length;
+  const isOwner = viewer && String(viewer._id) === String(record.owner);
+
+  const commentItems = comments.map((c) => {
+    const canDelete = viewer && (String(c.user) === String(viewer._id) || isOwner);
+    const avatar = c.avatarUrl
+      ? '<img class="avatar-sm avatar-img" src="' + escapeHtml(c.avatarUrl) + '" alt="' + escapeHtml(c.name) + '" style="width:34px;height:34px;object-fit:cover;display:block">'
+      : '<div class="avatar-sm" style="width:34px;height:34px;font-size:13px">' + escapeHtml((c.name || '?').trim().charAt(0).toUpperCase()) + '</div>';
+
+    return '<div class="comment">' +
+      '<div class="comment-avatar-wrap">' + avatar + '</div>' +
+      '<div class="comment-body">' +
+        '<div class="comment-head">' +
+          '<span class="comment-author">' +
+            (isGuest
+              ? escapeHtml(c.name)
+              : '<a href="/users/' + encodeURIComponent(c.username) + '">' + escapeHtml(c.name) + '</a>') +
+            ' <span style="color:#a1a1aa;font-weight:400">@' + escapeHtml(c.username) + '</span>' +
+          '</span>' +
+          '<span class="comment-time" title="' + escapeHtml(formatDate(c.createdAt)) + '">' + escapeHtml(timeAgo(c.createdAt)) + '</span>' +
+          (canDelete
+            ? '<form method="POST" action="/files/' + encodeURIComponent(String(record._id)) + '/comment/' + encodeURIComponent(String(c._id)) + '/delete" class="inline-form comment-actions"' +
+                ' data-confirm="This comment will be permanently deleted."' +
+                ' data-confirm-title="Delete comment?"' +
+                ' data-confirm-action="Delete"' +
+                ' data-confirm-variant="danger"' +
+                ' data-confirm-icon="fa-trash-can">' +
+                '<button type="submit" class="comment-delete" title="Delete comment"><i class="fa-solid fa-trash-can"></i></button>' +
+              '</form>'
+            : '') +
+        '</div>' +
+        '<div class="comment-text">' + escapeHtml(c.text) + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  const emptyState = count === 0
+    ? '<div class="comments-empty"><i class="fa-regular fa-comments"></i>' +
+        (isGuest ? 'No comments yet.' : 'No comments yet. Be the first to comment!') +
+      '</div>'
+    : '';
+
+  let formBlock = '';
+  if (isGuest) {
+    formBlock = '<div class="comment-signin-prompt">' +
+      '<i class="fa-solid fa-circle-info"></i>' +
+      '<div style="flex:1;min-width:0">Sign in or create an account to leave a comment.</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        '<a class="btn btn-outline btn-xs" href="/login"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in</a>' +
+        '<a class="btn btn-primary btn-xs" href="/register"><i class="fa-solid fa-user-plus"></i>Register</a>' +
+      '</div>' +
+    '</div>';
+  } else {
+    formBlock = '<form method="POST" action="/files/' + encodeURIComponent(String(record._id)) + '/comment" class="comment-form">' +
+      '<textarea class="textarea" name="text" placeholder="Write a comment… (max ' + MAX_COMMENT_LEN + ' characters)" maxlength="' + MAX_COMMENT_LEN + '" required></textarea>' +
+      '<div class="comment-form-actions">' +
+        '<button type="submit" class="btn btn-primary"><i class="fa-solid fa-paper-plane"></i>Post comment</button>' +
+      '</div>' +
+    '</form>';
+  }
+
+  return '<section class="comments-card" id="comments">' +
+    '<div class="comments-head">' +
+      '<h2><i class="fa-regular fa-comments"></i>Comments <span class="comment-count-pill">' + count + '</span></h2>' +
+    '</div>' +
+    formBlock +
+    (count > 0 ? '<div class="comment-list">' + commentItems + '</div>' : emptyState) +
+  '</section>';
+}
+
+/* ------------------------------------------------------------------ *
  * File detail page
  * ------------------------------------------------------------------ */
 function renderFileDetail(ctx) {
-  const { user, record, owner, notice = '', error = '' } = ctx;
+  const { user, isGuest, record, owner, notice = '', error = '' } = ctx;
   const kind = fileKind(record.mimeType, record.originalName);
   const isNote = record.kind === 'note';
   const fid = String(record._id);
   const src = record.fileUrl;
   const avg = averageRating(record);
   const ratingCount = record.ratings.length;
-  const myRating = userRating(record, user._id);
+  const myRating = user ? userRating(record, user._id) : 0;
   const ownerId = owner ? String(owner._id) : String(record.owner);
-  const viewerId = String(user._id);
-  const subscribed = ownerId !== viewerId && isSubscribed(user, ownerId);
-  const isSelf = ownerId === viewerId;
+  const viewerId = user ? String(user._id) : null;
+  const subscribed = !isGuest && user && viewerId !== ownerId && isSubscribed(user, ownerId);
+  const isSelf = !isGuest && user && viewerId === ownerId;
 
   let preview;
   let previewExtraClass = '';
@@ -1509,30 +1727,69 @@ function renderFileDetail(ctx) {
     '</div></div>';
   }
 
-  let stars = '';
-  for (let i = 1; i <= 5; i++) {
-    stars += '<button type="button" class="star-btn' + (myRating >= i ? ' on' : '') + '" data-value="' + i + '" aria-label="Rate ' + i + ' star' + (i > 1 ? 's' : '') + '">' +
-      '<i class="' + (myRating >= i ? 'fa-solid' : 'fa-regular') + ' fa-star"></i>' +
-    '</button>';
+  // Rating block — different for guests
+  let ratingBlock = '';
+  if (isGuest) {
+    ratingBlock = '<div class="rating-block">' +
+      '<div class="rating-head">' +
+        '<div class="rating-avg">' + avg.toFixed(1) + '</div>' +
+        '<div>' +
+          '<div class="rating-stars">' + renderStars(avg, 15) + '</div>' +
+          '<div class="rating-count">' + ratingCount + ' rating' + (ratingCount === 1 ? '' : 's') + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="comment-signin-prompt" style="margin:0">' +
+        '<i class="fa-solid fa-circle-info"></i>' +
+        '<div style="flex:1;min-width:0">Sign in to rate this file.</div>' +
+        '<a class="btn btn-outline btn-xs" href="/login"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in</a>' +
+      '</div>' +
+    '</div>';
+  } else {
+    let stars = '';
+    for (let i = 1; i <= 5; i++) {
+      stars += '<button type="button" class="star-btn' + (myRating >= i ? ' on' : '') + '" data-value="' + i + '" aria-label="Rate ' + i + ' star' + (i > 1 ? 's' : '') + '">' +
+        '<i class="' + (myRating >= i ? 'fa-solid' : 'fa-regular') + ' fa-star"></i>' +
+      '</button>';
+    }
+    ratingBlock = '<div class="rating-block" id="rating-block" data-file-id="' + escapeHtml(fid) + '">' +
+      '<div class="rating-head">' +
+        '<div class="rating-avg" id="rating-avg">' + avg.toFixed(1) + '</div>' +
+        '<div>' +
+          '<div class="rating-stars" id="rating-stars">' + renderStars(avg, 15) + '</div>' +
+          '<div class="rating-count"><span id="rating-count">' + ratingCount + '</span> rating' + (ratingCount === 1 ? '' : 's') + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div>' +
+        '<div class="label" style="margin-bottom:4px">Your rating</div>' +
+        '<div class="rating-input" id="rating-input" data-current="' + myRating + '">' + stars + '</div>' +
+        '<div class="rating-hint" id="rating-hint">' + (myRating ? 'You rated ' + myRating + ' star' + (myRating > 1 ? 's' : '') + '.' : 'Click a star to rate this file.') + '</div>' +
+      '</div>' +
+    '</div>';
   }
 
   const ownerSubscribers = owner && owner.subscribers ? owner.subscribers.length : 0;
   const ownerPublicFiles = ctx.ownerPublicFiles || 0;
 
-  const subscribeBtn = (!isSelf && owner)
-    ? '<form method="POST" action="/users/' + ownerId + '/subscribe" class="inline-form" style="width:100%">' +
-        '<button type="submit" class="btn ' + (subscribed ? 'btn-outline' : 'btn-primary') + ' btn-block">' +
-          (subscribed
-            ? '<i class="fa-solid fa-user-check"></i>Subscribed'
-            : '<i class="fa-solid fa-user-plus"></i>Subscribe') +
-        '</button></form>'
-    : (isSelf ? '<a class="btn btn-outline btn-block" href="/users/' + encodeURIComponent(user.username) + '"><i class="fa-regular fa-user"></i>View my profile</a>' : '');
+  // Subscribe button — different for guests
+  let subscribeBtn = '';
+  if (isGuest) {
+    subscribeBtn = '<a class="btn btn-outline btn-block" href="/login"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in to subscribe</a>';
+  } else if (!isSelf && owner) {
+    subscribeBtn = '<form method="POST" action="/users/' + ownerId + '/subscribe" class="inline-form" style="width:100%">' +
+      '<button type="submit" class="btn ' + (subscribed ? 'btn-outline' : 'btn-primary') + ' btn-block">' +
+        (subscribed
+          ? '<i class="fa-solid fa-user-check"></i>Subscribed'
+          : '<i class="fa-solid fa-user-plus"></i>Subscribe') +
+      '</button></form>';
+  } else if (isSelf) {
+    subscribeBtn = '<a class="btn btn-outline btn-block" href="/users/' + encodeURIComponent(user.username) + '"><i class="fa-regular fa-user"></i>View my profile</a>';
+  }
 
-  const editBtn = isSelf
+  const editBtn = (!isGuest && isSelf)
     ? '<a class="btn btn-outline btn-xs" href="/files/' + encodeURIComponent(fid) + '/edit"><i class="fa-solid fa-pen"></i>Edit</a>'
     : '';
 
-  const deleteBtn = isSelf
+  const deleteBtn = (!isGuest && isSelf)
     ? '<form method="POST" action="/files/' + encodeURIComponent(fid) + '/delete" class="inline-form"' +
         ' data-confirm="This file will be permanently deleted. This action cannot be undone."' +
         ' data-confirm-title="Delete this file?"' +
@@ -1548,22 +1805,6 @@ function renderFileDetail(ctx) {
       '<div class="a4-thumb-card-head"><i class="fa-solid fa-file-image"></i>A4 Preview</div>' +
       '<div class="a4-thumb-card-body">' +
         '<div class="a4-thumb">' + renderA4ThumbInner(record, kind) + '</div>' +
-      '</div>' +
-    '</div>';
-
-  const ratingBlock = '' +
-    '<div class="rating-block" id="rating-block" data-file-id="' + escapeHtml(fid) + '">' +
-      '<div class="rating-head">' +
-        '<div class="rating-avg" id="rating-avg">' + avg.toFixed(1) + '</div>' +
-        '<div>' +
-          '<div class="rating-stars" id="rating-stars">' + renderStars(avg, 15) + '</div>' +
-          '<div class="rating-count"><span id="rating-count">' + ratingCount + '</span> rating' + (ratingCount === 1 ? '' : 's') + '</div>' +
-        '</div>' +
-      '</div>' +
-      '<div>' +
-        '<div class="label" style="margin-bottom:4px">Your rating</div>' +
-        '<div class="rating-input" id="rating-input" data-current="' + myRating + '">' + stars + '</div>' +
-        '<div class="rating-hint" id="rating-hint">' + (myRating ? 'You rated ' + myRating + ' star' + (myRating > 1 ? 's' : '') + '.' : 'Click a star to rate this file.') + '</div>' +
       '</div>' +
     '</div>';
 
@@ -1589,8 +1830,24 @@ function renderFileDetail(ctx) {
     ? '<i class="fa-solid fa-tag"></i> ' + escapeHtml(record.subject) + ' &middot; '
     : '';
 
+  const guestBanner = isGuest
+    ? '<div class="guest-banner">' +
+        '<i class="fa-solid fa-user-secret"></i>' +
+        '<div class="guest-banner-text">' +
+          '<b>You\'re browsing as a guest.</b> You can download and share this file. ' +
+          'Sign in to rate it, leave a comment, and follow the uploader.' +
+        '</div>' +
+        '<div class="guest-banner-actions">' +
+          '<a class="btn btn-outline btn-xs" href="/login"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in</a>' +
+          '<a class="btn btn-primary btn-xs" href="/register"><i class="fa-solid fa-user-plus"></i>Register</a>' +
+        '</div>' +
+      '</div>'
+    : '';
+
+  const commentsHtml = renderCommentsSection(record, user, isGuest);
+
   const body = '' +
-    renderTopNav(user, '') +
+    renderTopNav(user, '', isGuest) +
     '<div class="container">' +
       '<div class="flex-between" style="margin-bottom:16px">' +
         '<a class="btn btn-ghost btn-xs" href="' + (record.visibility === 'public' ? '/gallery' : '/') + '"><i class="fa-solid fa-arrow-left"></i>Back</a>' +
@@ -1601,6 +1858,7 @@ function renderFileDetail(ctx) {
         '</div>' +
       '</div>' +
 
+      guestBanner +
       (notice ? '<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i><span>' + escapeHtml(notice) + '</span></div>' : '') +
       (error ? '<div class="alert alert-error"><i class="fa-solid fa-circle-exclamation"></i><span>' + escapeHtml(error) + '</span></div>' : '') +
 
@@ -1624,6 +1882,8 @@ function renderFileDetail(ctx) {
               '<div class="meta-item"><span class="k">Views</span><span class="v">' + (record.views || 0) + '</span></div>' +
             '</div>' +
           '</div>' +
+
+          commentsHtml +
         '</div>' +
 
         '<aside>' +
@@ -1638,7 +1898,9 @@ function renderFileDetail(ctx) {
               renderAvatar(owner || { username: record.ownerUsername, name: record.ownerUsername }, 42) +
               '<div class="uploader-meta">' +
                 '<div class="name">' + escapeHtml(owner ? owner.name : record.ownerUsername) + '</div>' +
-                '<a class="handle" href="/users/' + encodeURIComponent(record.ownerUsername) + '">@' + escapeHtml(record.ownerUsername) + '</a>' +
+                (isGuest
+                  ? '<span class="handle">@' + escapeHtml(record.ownerUsername) + '</span>'
+                  : '<a class="handle" href="/users/' + encodeURIComponent(record.ownerUsername) + '">@' + escapeHtml(record.ownerUsername) + '</a>') +
               '</div>' +
             '</div>' +
             '<div class="uploader-stats">' +
@@ -1651,7 +1913,8 @@ function renderFileDetail(ctx) {
       '</div>' +
     '</div>' +
 
-    '<script>(function(){' +
+    // Rating script (only rendered when not a guest)
+    (!isGuest ? '<script>(function(){' +
       'var block=document.getElementById("rating-block");if(!block)return;' +
       'var fileId=block.getAttribute("data-file-id");' +
       'var input=document.getElementById("rating-input");' +
@@ -1669,7 +1932,7 @@ function renderFileDetail(ctx) {
         '.catch(function(){hint.textContent="Could not save your rating. Please try again.";})' +
         '.then(function(){setBusy(false);});' +
       '});' +
-    '})();</script>' +
+    '})();</script>' : '') +
 
     '<script>(function(){' +
       'var buttons=document.querySelectorAll("[data-share]");if(!buttons.length)return;' +
@@ -1710,7 +1973,7 @@ function renderFileDetail(ctx) {
 }
 
 /* ------------------------------------------------------------------ *
- * File edit page — now with optional file replacement
+ * File edit page
  * ------------------------------------------------------------------ */
 function renderFileEdit(ctx) {
   const { user, record, error = '', values } = ctx;
@@ -1767,7 +2030,7 @@ function renderFileEdit(ctx) {
     '</div>';
 
   const body = '' +
-    renderTopNav(user, '') +
+    renderTopNav(user, '', false) +
     '<div class="container">' +
       '<div class="flex-between" style="margin-bottom:16px">' +
         '<a class="btn btn-ghost btn-xs" href="/files/' + encodeURIComponent(fid) + '"><i class="fa-solid fa-arrow-left"></i>Back to file</a>' +
@@ -1808,7 +2071,6 @@ function renderFileEdit(ctx) {
 
           '<hr class="form-divider">' +
 
-          // Replace file section
           '<div class="field">' +
             '<label class="label">Replace file <span style="color:#a1a1aa;font-weight:400">(optional)</span></label>' +
             '<div class="alert alert-warning" style="margin-bottom:12px">' +
@@ -1887,7 +2149,7 @@ function renderProfileEdit(ctx) {
   const v = values || { name: user.name, email: user.email, username: user.username };
 
   const body = '' +
-    renderTopNav(user, '') +
+    renderTopNav(user, '', false) +
     '<div class="container">' +
       '<div class="flex-between" style="margin-bottom:16px">' +
         '<a class="btn btn-ghost btn-xs" href="/users/' + encodeURIComponent(user.username) + '"><i class="fa-solid fa-arrow-left"></i>Back to profile</a>' +
@@ -2034,13 +2296,13 @@ function renderUserProfile(ctx) {
       '</div>'
     : '';
 
-  const cards = records.map((r) => renderCard(r, viewer)).join('');
+  const cards = records.map((r) => renderCard(r, viewer, false)).join('');
   const main = records.length
     ? '<div class="grid">' + cards + '</div>'
     : '<div class="empty"><i class="fa-regular fa-folder-open"></i><h3>No public files yet</h3><p>This user has not shared anything publicly.</p></div>';
 
   const body = '' +
-    renderTopNav(viewer, '') +
+    renderTopNav(viewer, '', false) +
     '<div class="container">' +
       avatarCard +
       manageCard +
@@ -2065,7 +2327,7 @@ function renderUserProfile(ctx) {
 
 function renderErrorPage(status, title, message) {
   const body = '' +
-    renderTopNav(null, '') +
+    renderTopNav(null, '', false) +
     '<div class="container-narrow">' +
       brandMark() +
       '<div class="card error-page">' +
@@ -2078,7 +2340,7 @@ function renderErrorPage(status, title, message) {
 }
 
 /* ------------------------------------------------------------------ *
- * Express app + middleware
+ * Express app
  * ------------------------------------------------------------------ */
 const app = express();
 
@@ -2139,6 +2401,13 @@ app.use(session({
 
 app.use(async (req, res, next) => {
   req.user = null;
+  req.isGuest = false;
+
+  if (req.session && req.session.isGuest) {
+    req.isGuest = true;
+    return next();
+  }
+
   if (req.session && req.session.userId) {
     try {
       const u = await User.findById(req.session.userId)
@@ -2153,14 +2422,23 @@ app.use(async (req, res, next) => {
   next();
 });
 
+/** Allows both real users and guests. */
 function requireAuth(req, res, next) {
+  if (req.user || req.isGuest) return next();
+  if (req.session && req.session.registered) return res.redirect('/login');
+  return res.redirect('/register');
+}
+
+/** Blocks guests — redirects them to login with a notice. */
+function requireRealUser(req, res, next) {
   if (req.user) return next();
+  if (req.isGuest) return res.redirect('/login?guestBlocked=1');
   if (req.session && req.session.registered) return res.redirect('/login');
   return res.redirect('/register');
 }
 
 /* ------------------------------------------------------------------ *
- * Multer — file uploads and avatar uploads
+ * Multer
  * ------------------------------------------------------------------ */
 const uploadFile = multer({
   storage: multer.memoryStorage(),
@@ -2184,11 +2462,10 @@ function handleFileUpload(fieldName) {
 
       if (!req.user) return res.redirect('/login');
 
-      // Handle edit form (has newFile field)
       if (name === 'newFile') {
         return res.status(400).send(renderFileEdit({
           user: req.user,
-          record: { _id: req.params.id, chapterName: 'file', chapterNo: '', subject: '', writer: '', description: '', visibility: 'public', tags: [], kind: 'note', mimeType: '', originalName: '', fileUrl: '', _editFallback: true },
+          record: { _id: req.params.id, chapterName: 'file', chapterNo: '', subject: '', writer: '', description: '', visibility: 'public', tags: [], kind: 'note', mimeType: '', originalName: '', fileUrl: '', owner: req.user._id, comments: [], ratings: [] },
           error: message
         }));
       }
@@ -2213,7 +2490,7 @@ function handleAvatarUpload(req, res, next) {
 }
 
 /* ------------------------------------------------------------------ *
- * Static routes
+ * Static
  * ------------------------------------------------------------------ */
 app.get('/favicon.ico', (req, res) => {
   res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
@@ -2237,11 +2514,22 @@ app.get('/robots.txt', (req, res) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Home + gallery
+ * Home + gallery (guests allowed)
  * ------------------------------------------------------------------ */
 app.get('/', requireAuth, async (req, res, next) => {
   try {
     const user = req.user;
+    const isGuest = req.isGuest;
+
+    if (isGuest) {
+      const records = await File.find({ visibility: 'public' })
+        .populate('owner', 'name username avatarUrl')
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .lean();
+      return res.send(renderHome({ user: null, isGuest: true, records }));
+    }
+
     const filter = typeof req.query.filter === 'string' ? req.query.filter : 'all';
     const sort = typeof req.query.sort === 'string' ? req.query.sort : 'recent';
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
@@ -2280,13 +2568,14 @@ app.get('/', requireAuth, async (req, res, next) => {
     if (req.query.upload === 'success') notice = 'Your file was uploaded successfully.';
     else if (req.query.deleted === 'success') notice = 'The file was deleted successfully.';
 
-    res.send(renderHome({ user, records, notice, filter, sort, query }));
+    res.send(renderHome({ user, isGuest: false, records, notice, filter, sort, query }));
   } catch (err) { next(err); }
 });
 
 app.get('/gallery', requireAuth, async (req, res, next) => {
   try {
     const user = req.user;
+    const isGuest = req.isGuest;
     const sort = typeof req.query.sort === 'string' ? req.query.sort : 'recent';
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
 
@@ -2312,16 +2601,18 @@ app.get('/gallery', requireAuth, async (req, res, next) => {
 
     if (sort === 'rating') records = records.sort((a, b) => averageRating(b) - averageRating(a));
 
-    res.send(renderGallery({ user, records, sort, query }));
+    res.send(renderGallery({ user, isGuest, records, sort, query }));
   } catch (err) { next(err); }
 });
 
 /* ------------------------------------------------------------------ *
- * Auth routes
+ * Auth
  * ------------------------------------------------------------------ */
 app.get('/register', (req, res) => {
   if (req.user) return res.redirect('/');
-  res.send(renderRegister({}));
+  if (req.isGuest) return res.redirect('/');
+  const info = req.query.guestBlocked ? 'Please sign in or create an account to use that feature.' : '';
+  res.send(renderRegister({ info }));
 });
 
 app.post('/register', async (req, res, next) => {
@@ -2362,10 +2653,11 @@ app.post('/register', async (req, res, next) => {
 
     await User.create({ name, email, username, passwordHash: hashPassword(password) });
 
-    req.session.registered = true;
-    req.session.save((err) => {
-      if (err) console.error('[biologynotes] register save error:', err);
-      return res.redirect('/login');
+    // Clear any guest flag
+    req.session.regenerate((err) => {
+      if (err) console.error('[biologynotes] register regenerate error:', err);
+      req.session.registered = true;
+      req.session.save(() => res.redirect('/login'));
     });
   } catch (err) {
     if (err && err.code === 11000) {
@@ -2380,7 +2672,11 @@ app.post('/register', async (req, res, next) => {
 
 app.get('/login', (req, res) => {
   if (req.user) return res.redirect('/');
-  res.send(renderLogin({}));
+  if (req.isGuest) return res.redirect('/');
+  const info = req.query.guestBlocked
+    ? 'That feature requires a real account. Sign in or register to continue.'
+    : (req.query.accountDeleted ? 'Your account was deleted successfully.' : '');
+  res.send(renderLogin({ info }));
 });
 
 app.post('/login', async (req, res, next) => {
@@ -2401,20 +2697,31 @@ app.post('/login', async (req, res, next) => {
       return res.status(401).send(renderLogin({ error: 'Invalid username or password.', values: { username } }));
     }
 
-    req.session.userId = String(user._id);
-    req.session.registered = true;
-
-    req.session.save((err) => {
+    req.session.regenerate((err) => {
       if (err) {
-        console.error('[biologynotes] login save error:', err);
+        console.error('[biologynotes] login regenerate error:', err);
         return res.status(500).send(renderLogin({
           error: 'Something went wrong while signing you in. Please try again.',
           values: { username }
         }));
       }
-      return res.redirect('/');
+      req.session.userId = String(user._id);
+      req.session.registered = true;
+      req.session.save(() => res.redirect('/'));
     });
   } catch (err) { next(err); }
+});
+
+app.post('/guest', (req, res) => {
+  req.session.regenerate((err) => {
+    if (err) {
+      console.error('[biologynotes] guest regenerate error:', err);
+      return res.redirect('/register');
+    }
+    req.session.isGuest = true;
+    req.session.registered = true;
+    req.session.save(() => res.redirect('/'));
+  });
 });
 
 app.get('/logout', (req, res) => {
@@ -2427,14 +2734,14 @@ app.get('/logout', (req, res) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Upload route
+ * Upload (real users only)
  * ------------------------------------------------------------------ */
-app.get('/upload', requireAuth, (req, res) => {
+app.get('/upload', requireRealUser, (req, res) => {
   const tab = req.query.tab === 'other' ? 'other' : 'notes';
   res.send(renderUpload({ user: req.user, values: {}, activeTab: tab }));
 });
 
-app.post('/upload', requireAuth, handleFileUpload('file'), async (req, res, next) => {
+app.post('/upload', requireRealUser, handleFileUpload('file'), async (req, res, next) => {
   const kind = (req.body && req.body.kind === 'other') ? 'other' : 'note';
   const activeTab = kind === 'other' ? 'other' : 'notes';
 
@@ -2447,9 +2754,7 @@ app.post('/upload', requireAuth, handleFileUpload('file'), async (req, res, next
 
     const baseValues = {
       writer, description, visibility,
-      chapterNo: body.chapterNo,
-      chapterName: body.chapterName,
-      subject: body.subject,
+      chapterNo: body.chapterNo, chapterName: body.chapterName, subject: body.subject,
       tag1: body.tag1, tag2: body.tag2, tag3: body.tag3
     };
 
@@ -2530,18 +2835,14 @@ app.post('/upload', requireAuth, handleFileUpload('file'), async (req, res, next
 });
 
 /* ------------------------------------------------------------------ *
- * File edit routes — now with optional file replacement
+ * File edit (real users only)
  * ------------------------------------------------------------------ */
-app.get('/files/:id/edit', requireAuth, async (req, res, next) => {
+app.get('/files/:id/edit', requireRealUser, async (req, res, next) => {
   try {
     const id = req.params.id;
-    if (!isValidObjectId(id)) {
-      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
-    }
+    if (!isValidObjectId(id)) return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
     const record = await File.findById(id).lean();
-    if (!record) {
-      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
-    }
+    if (!record) return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
     if (String(record.owner) !== String(req.user._id)) {
       return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You can only edit your own files.'));
     }
@@ -2549,16 +2850,12 @@ app.get('/files/:id/edit', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.post('/files/:id/edit', requireAuth, handleFileUpload('newFile'), async (req, res, next) => {
+app.post('/files/:id/edit', requireRealUser, handleFileUpload('newFile'), async (req, res, next) => {
   try {
     const id = req.params.id;
-    if (!isValidObjectId(id)) {
-      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
-    }
+    if (!isValidObjectId(id)) return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
     const record = await File.findById(id);
-    if (!record) {
-      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
-    }
+    if (!record) return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
     if (String(record.owner) !== String(req.user._id)) {
       return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You can only edit your own files.'));
     }
@@ -2615,20 +2912,15 @@ app.post('/files/:id/edit', requireAuth, handleFileUpload('newFile'), async (req
     record.description = description;
     record.visibility = visibility;
 
-    // ===== Optional file replacement =====
     if (req.file) {
-      if (req.file.size > MAX_FILE_SIZE) {
-        return fail('Replacement file is too large. The maximum allowed size is 100 MB.', 413);
-      }
+      if (req.file.size > MAX_FILE_SIZE) return fail('Replacement file is too large.', 413);
 
-      // 1. Delete old asset from Cloudinary
       try {
         await deleteFromCloudinary(record.storedName, record.resourceType);
       } catch (err) {
         console.warn('[biologynotes] could not delete old Cloudinary asset during edit:', err.message);
       }
 
-      // 2. Upload new asset
       const result = await uploadBufferToCloudinary(req.file.buffer, req.file.originalname);
       const normalizedName = normalizeOriginalName(req.file.originalname);
       const pseudoRecord = {
@@ -2638,7 +2930,6 @@ app.post('/files/:id/edit', requireAuth, handleFileUpload('newFile'), async (req
       };
       const thumbnailUrl = buildA4ThumbnailUrl(pseudoRecord);
 
-      // 3. Update record
       record.originalName = normalizedName;
       record.storedName = result.public_id;
       record.fileUrl = result.secure_url;
@@ -2649,7 +2940,6 @@ app.post('/files/:id/edit', requireAuth, handleFileUpload('newFile'), async (req
     }
 
     await record.save();
-
     return res.redirect('/files/' + encodeURIComponent(id) + '?updated=success');
   } catch (err) {
     console.error('[biologynotes] file edit failed:', err);
@@ -2658,13 +2948,11 @@ app.post('/files/:id/edit', requireAuth, handleFileUpload('newFile'), async (req
 });
 
 /* ------------------------------------------------------------------ *
- * Avatar routes
+ * Avatar (real users only)
  * ------------------------------------------------------------------ */
-app.post('/profile/avatar', requireAuth, handleAvatarUpload, async (req, res, next) => {
+app.post('/profile/avatar', requireRealUser, handleAvatarUpload, async (req, res, next) => {
   try {
-    if (!req.file) {
-      return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent('Please choose an image.'));
-    }
+    if (!req.file) return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent('Please choose an image.'));
     if (!String(req.file.mimetype || '').startsWith('image/')) {
       return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent('Profile picture must be an image.'));
     }
@@ -2673,46 +2961,34 @@ app.post('/profile/avatar', requireAuth, handleAvatarUpload, async (req, res, ne
       await deleteFromCloudinary(req.user.avatarPublicId, 'image');
     }
 
-    const result = await uploadBufferToCloudinary(
-      req.file.buffer, req.file.originalname, 'biologynotes/avatars'
-    );
-
-    await User.updateOne(
-      { _id: req.user._id },
-      { $set: { avatarUrl: result.secure_url, avatarPublicId: result.public_id } }
-    );
-
+    const result = await uploadBufferToCloudinary(req.file.buffer, req.file.originalname, 'biologynotes/avatars');
+    await User.updateOne({ _id: req.user._id }, { $set: { avatarUrl: result.secure_url, avatarPublicId: result.public_id } });
     return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarUpdated=1');
   } catch (err) {
     console.error('[biologynotes] avatar upload failed:', err);
-    return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent('Could not upload avatar. Please try again.'));
+    return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent('Could not upload avatar.'));
   }
 });
 
-app.post('/profile/avatar/remove', requireAuth, async (req, res, next) => {
+app.post('/profile/avatar/remove', requireRealUser, async (req, res, next) => {
   try {
-    if (req.user.avatarPublicId) {
-      await deleteFromCloudinary(req.user.avatarPublicId, 'image');
-    }
-    await User.updateOne(
-      { _id: req.user._id },
-      { $set: { avatarUrl: '', avatarPublicId: '' } }
-    );
+    if (req.user.avatarPublicId) await deleteFromCloudinary(req.user.avatarPublicId, 'image');
+    await User.updateOne({ _id: req.user._id }, { $set: { avatarUrl: '', avatarPublicId: '' } });
     return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarUpdated=1');
   } catch (err) { next(err); }
 });
 
 /* ------------------------------------------------------------------ *
- * Profile edit + delete account
+ * Profile edit + delete (real users only)
  * ------------------------------------------------------------------ */
-app.get('/profile/edit', requireAuth, (req, res) => {
+app.get('/profile/edit', requireRealUser, (req, res) => {
   res.send(renderProfileEdit({
     user: req.user,
     notice: req.query.updated ? 'Your profile was updated successfully.' : ''
   }));
 });
 
-app.post('/profile/edit', requireAuth, async (req, res, next) => {
+app.post('/profile/edit', requireRealUser, async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id);
     if (!user) return res.redirect('/login');
@@ -2724,19 +3000,15 @@ app.post('/profile/edit', requireAuth, async (req, res, next) => {
     const currentPassword = String(body.currentPassword || '');
     const newPassword = String(body.newPassword || '');
     const confirmPassword = String(body.confirmPassword || '');
-
     const values = { name, email, username };
 
-    const fail = (message, status) => res.status(status || 400).send(renderProfileEdit({
-      user: req.user, error: message, values
-    }));
+    const fail = (message, status) => res.status(status || 400).send(renderProfileEdit({ user: req.user, error: message, values }));
 
     if (!name || !email || !username) return fail('Name, email, and username are required.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Please enter a valid email address.');
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return fail('Username must be 3–20 characters — letters, numbers, or underscores only.');
     if (name.length > 80) return fail('Name is too long.');
 
-    // Uniqueness check (excluding self)
     const dupe = await User.findOne({
       _id: { $ne: user._id },
       $or: [
@@ -2752,7 +3024,6 @@ app.post('/profile/edit', requireAuth, async (req, res, next) => {
       return fail(msg, 409);
     }
 
-    // Password change (optional)
     if (newPassword || confirmPassword || currentPassword) {
       if (!currentPassword) return fail('Please enter your current password to change it.');
       if (!verifyPassword(currentPassword, user.passwordHash)) return fail('Current password is incorrect.', 401);
@@ -2765,11 +3036,8 @@ app.post('/profile/edit', requireAuth, async (req, res, next) => {
     user.name = name;
     user.email = email;
 
-    // If username changed, we must also update all File.ownerUsername records.
     const usernameChanged = user.username.toLowerCase() !== username.toLowerCase();
-    if (usernameChanged) {
-      user.username = username;
-    }
+    if (usernameChanged) user.username = username;
 
     await user.save();
 
@@ -2777,7 +3045,6 @@ app.post('/profile/edit', requireAuth, async (req, res, next) => {
       await File.updateMany({ owner: user._id }, { $set: { ownerUsername: username } });
     }
 
-    // Refresh session-bound user data is automatic (req.user middleware reads DB each request).
     return res.redirect('/profile/edit?updated=1');
   } catch (err) {
     if (err && err.code === 11000) {
@@ -2791,49 +3058,23 @@ app.post('/profile/edit', requireAuth, async (req, res, next) => {
   }
 });
 
-/**
- * Delete account:
- *  - Remove the user's avatar from Cloudinary
- *  - Remove every file the user owns from Cloudinary
- *  - Delete every File document owned by the user
- *  - Pull the user from all other users' subscribers / subscribedTo
- *  - Delete the User document
- *  - Destroy the session
- */
-app.post('/profile/delete', requireAuth, async (req, res, next) => {
+app.post('/profile/delete', requireRealUser, async (req, res, next) => {
   try {
     const userId = req.user._id;
 
-    // 1. Delete avatar from Cloudinary
-    if (req.user.avatarPublicId) {
-      await deleteFromCloudinary(req.user.avatarPublicId, 'image');
-    }
+    if (req.user.avatarPublicId) await deleteFromCloudinary(req.user.avatarPublicId, 'image');
 
-    // 2. Fetch the user's files to delete from Cloudinary + DB
     const userFiles = await File.find({ owner: userId }).lean();
     for (const f of userFiles) {
-      try {
-        await deleteFromCloudinary(f.storedName, f.resourceType);
-      } catch (err) {
-        console.warn('[biologynotes] delete account: could not delete asset', f.storedName, '-', err.message);
-      }
+      try { await deleteFromCloudinary(f.storedName, f.resourceType); }
+      catch (err) { console.warn('[biologynotes] delete account: could not delete asset', f.storedName, '-', err.message); }
     }
     await File.deleteMany({ owner: userId });
 
-    // 3. Pull user from other users' subscriber lists
-    await User.updateMany(
-      { subscribers: userId },
-      { $pull: { subscribers: userId } }
-    );
-    await User.updateMany(
-      { subscribedTo: userId },
-      { $pull: { subscribedTo: userId } }
-    );
-
-    // 4. Delete user
+    await User.updateMany({ subscribers: userId }, { $pull: { subscribers: userId } });
+    await User.updateMany({ subscribedTo: userId }, { $pull: { subscribedTo: userId } });
     await User.deleteOne({ _id: userId });
 
-    // 5. Destroy session and clear cookie
     if (req.session) {
       req.session.destroy(() => {
         res.clearCookie('bn.sid');
@@ -2850,12 +3091,18 @@ app.post('/profile/delete', requireAuth, async (req, res, next) => {
 });
 
 /* ------------------------------------------------------------------ *
- * File view / raw / download / rate / delete
+ * File view / raw / download / rate / comment / delete
  * ------------------------------------------------------------------ */
 async function findAccessibleFile(req, id) {
   if (!isValidObjectId(id)) return { error: 'notfound' };
   const record = await File.findById(id).lean();
   if (!record) return { error: 'notfound' };
+
+  if (req.isGuest) {
+    if (record.visibility !== 'public') return { error: 'forbidden' };
+    return { record };
+  }
+
   if (record.visibility !== 'public' && String(record.owner) !== String(req.user._id)) {
     return { error: 'forbidden' };
   }
@@ -2885,8 +3132,12 @@ app.get('/files/:id', requireAuth, async (req, res, next) => {
     let notice = '';
     if (req.query.rated === '1') notice = 'Thanks for rating!';
     else if (req.query.updated === 'success') notice = 'File updated successfully.';
+    else if (req.query.commented === '1') notice = 'Comment posted.';
 
-    res.send(renderFileDetail({ user: req.user, record, owner, ownerPublicFiles, notice }));
+    res.send(renderFileDetail({
+      user: req.user, isGuest: req.isGuest,
+      record, owner, ownerPublicFiles, notice
+    }));
   } catch (err) { next(err); }
 });
 
@@ -2916,16 +3167,12 @@ app.get('/files/:id/download', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.post('/files/:id/delete', requireAuth, async (req, res, next) => {
+app.post('/files/:id/delete', requireRealUser, async (req, res, next) => {
   try {
     const id = req.params.id;
-    if (!isValidObjectId(id)) {
-      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
-    }
+    if (!isValidObjectId(id)) return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
     const record = await File.findById(id).lean();
-    if (!record) {
-      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
-    }
+    if (!record) return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
     if (String(record.owner) !== String(req.user._id)) {
       return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You can only delete your own files.'));
     }
@@ -2936,12 +3183,12 @@ app.post('/files/:id/delete', requireAuth, async (req, res, next) => {
     }
 
     await File.deleteOne({ _id: record._id });
-
     return res.redirect('/?deleted=success');
   } catch (err) { next(err); }
 });
 
-app.post('/files/:id/rate', requireAuth, async (req, res, next) => {
+/** Ratings — real users only. */
+app.post('/files/:id/rate', requireRealUser, async (req, res, next) => {
   try {
     const result = await findAccessibleFile(req, req.params.id);
     if (result.error === 'notfound') return res.status(404).json({ error: 'notfound' });
@@ -2973,10 +3220,65 @@ app.post('/files/:id/rate', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/** Comments — real users only. */
+app.post('/files/:id/comment', requireRealUser, async (req, res, next) => {
+  try {
+    const result = await findAccessibleFile(req, req.params.id);
+    if (result.error === 'notfound') return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
+    if (result.error === 'forbidden') return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You do not have access to this file.'));
+
+    const text = String((req.body && req.body.text) || '').trim();
+    if (!text) return res.redirect('/files/' + encodeURIComponent(result.record._id) + '#comments');
+    if (text.length > MAX_COMMENT_LEN) {
+      return res.redirect('/files/' + encodeURIComponent(result.record._id) + '#comments');
+    }
+
+    const record = await File.findById(result.record._id);
+    record.comments.push({
+      user: req.user._id,
+      username: req.user.username,
+      name: req.user.name,
+      avatarUrl: req.user.avatarUrl || '',
+      text,
+      createdAt: Date.now()
+    });
+    await record.save();
+
+    return res.redirect('/files/' + encodeURIComponent(result.record._id) + '?commented=1#comments');
+  } catch (err) { next(err); }
+});
+
+app.post('/files/:id/comment/:commentId/delete', requireRealUser, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const commentId = req.params.commentId;
+    if (!isValidObjectId(id) || !isValidObjectId(commentId)) {
+      return res.status(404).send(renderErrorPage(404, 'Not found', 'That comment does not exist.'));
+    }
+
+    const record = await File.findById(id);
+    if (!record) return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
+
+    const comment = record.comments.id(commentId);
+    if (!comment) return res.redirect('/files/' + encodeURIComponent(id) + '#comments');
+
+    const isAuthor = String(comment.user) === String(req.user._id);
+    const isFileOwner = String(record.owner) === String(req.user._id);
+    if (!isAuthor && !isFileOwner) {
+      return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You can only delete your own comments.'));
+    }
+
+    comment.deleteOne();
+    await record.save();
+
+    return res.redirect('/files/' + encodeURIComponent(id) + '#comments');
+  } catch (err) { next(err); }
+});
+
 /* ------------------------------------------------------------------ *
- * Users
+ * User profile
  * ------------------------------------------------------------------ */
-app.get('/users/:username', requireAuth, async (req, res, next) => {
+app.get('/users/:username', requireRealUser, async (req, res, next) => {
   try {
     const viewer = req.user;
     const profileUser = await User.findOne({
@@ -3006,7 +3308,7 @@ app.get('/users/:username', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.post('/users/:id/subscribe', requireAuth, async (req, res, next) => {
+app.post('/users/:id/subscribe', requireRealUser, async (req, res, next) => {
   try {
     const viewer = req.user;
     const targetId = req.params.id;
