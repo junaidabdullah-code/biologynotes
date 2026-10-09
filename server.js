@@ -1950,7 +1950,7 @@ const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
-app.use(helmet({
+(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
     directives: {
@@ -1990,7 +1990,7 @@ app.use(session({
   store: MongoStore.create({ mongoUrl: MONGO_URI, collectionName: 'sessions', ttl: 60 * 60 * 24 * 7, autoRemove: 'native', touchAfter: 24 * 3600 }),
   cookie: { httpOnly: true, sameSite: 'lax', secure: 'auto', maxAge: 1000 * 60 * 60 * 8 }
 }));
-
+app.use(express.static(path.join(__dirname, 'public')));
 /**
  * Session / auth detection middleware.
  * Sets:
