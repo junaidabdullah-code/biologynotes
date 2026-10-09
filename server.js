@@ -790,7 +790,6 @@ p{margin:0}
 .uploader-stats span{display:inline-flex;align-items:center;gap:6px}
 .uploader-stats i{font-size:11.5px;color:#a1a1aa}
 
-/* Comments */
 .comments-card{background:#fff;border:1px solid #e4e4e7;padding:22px;margin-top:22px}
 .comments-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #f4f4f5}
 .comments-head h2{font-size:17px;display:flex;align-items:center;gap:10px}
@@ -820,7 +819,6 @@ p{margin:0}
 .comment-signin-prompt{background:#f0f9ff;border:1px solid #bae6fd;padding:16px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-family:'Poppins',sans-serif;font-size:13.5px;color:#075985;margin-bottom:22px}
 .comment-signin-prompt i{font-size:16px;color:#0284c7}
 
-/* Profile manage */
 .profile-manage-card{background:#fff;border:1px solid #e4e4e7;padding:20px;margin-bottom:22px}
 .profile-manage-title{font-family:'Playfair Display',serif;font-size:16px;font-weight:600;letter-spacing:-.005em;margin:0 0 6px;color:#18181b}
 .profile-manage-desc{font-family:'Poppins',sans-serif;font-size:12.5px;color:#71717a;margin:0 0 14px}
@@ -852,7 +850,6 @@ p{margin:0}
 .upload-header .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#a1a1aa;font-weight:600;font-family:'Poppins',sans-serif;margin-bottom:4px}
 .upload-header h1{font-size:28px}
 
-/* Confirm modal */
 .modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(24,24,27,.55);display:flex;align-items:center;justify-content:center;padding:20px;animation:bnFadeIn .15s ease}
 .modal-backdrop[hidden]{display:none}
 @keyframes bnFadeIn{from{opacity:0}to{opacity:1}}
@@ -1029,9 +1026,9 @@ function renderTopNav(user, active, isGuest) {
  * Auth pages
  * ------------------------------------------------------------------ */
 function renderRegister(ctx) {
-  const { error = '', values = {}, info = '' } = ctx || {};
+  const { error = '', values = {}, info = '', isGuest = false } = ctx || {};
   const body = '' +
-    renderTopNav(null, 'register', false) +
+    renderTopNav(null, 'register', isGuest) +
     '<div class="auth-wrap"><div class="auth-card">' +
       '<div class="auth-brand">' +
         '<div class="brand-mark" style="width:48px;height:48px"><i class="fa-solid fa-dna" style="font-size:22px"></i></div>' +
@@ -1052,14 +1049,19 @@ function renderRegister(ctx) {
         '<button type="submit" class="btn btn-primary btn-block btn-lg"><i class="fa-solid fa-user-plus"></i>Create account</button>' +
       '</form>' +
 
-      '<div class="auth-divider">or</div>' +
-
-      '<form method="POST" action="/guest">' +
-        '<button type="submit" class="btn btn-outline btn-block btn-lg">' +
-          '<i class="fa-solid fa-user-secret"></i>Continue as Guest' +
-        '</button>' +
-      '</form>' +
-      '<p class="foot-note" style="margin-top:12px;font-size:12.5px">Guests can browse public files, download, and share — but cannot rate, comment, or upload.</p>' +
+      // Only show "Continue as Guest" if NOT already a guest
+      (!isGuest
+        ? '<div class="auth-divider">or</div>' +
+          '<form method="POST" action="/guest">' +
+            '<button type="submit" class="btn btn-outline btn-block btn-lg">' +
+              '<i class="fa-solid fa-user-secret"></i>Continue as Guest' +
+            '</button>' +
+          '</form>' +
+          '<p class="foot-note" style="margin-top:12px;font-size:12.5px">Guests can browse public files, download, and share — but cannot rate, comment, or upload.</p>'
+        : '<div class="alert alert-info" style="margin-top:18px;margin-bottom:0">' +
+            '<i class="fa-solid fa-circle-info"></i>' +
+            '<span>You\'re currently browsing as a guest. Registering below will upgrade you to a full account.</span>' +
+          '</div>') +
 
       '<p class="foot-note">Already registered? <a href="/login">Sign in</a></p>' +
     '</div></div>';
@@ -1067,9 +1069,9 @@ function renderRegister(ctx) {
 }
 
 function renderLogin(ctx) {
-  const { error = '', values = {}, info = '' } = ctx || {};
+  const { error = '', values = {}, info = '', isGuest = false } = ctx || {};
   const body = '' +
-    renderTopNav(null, 'login', false) +
+    renderTopNav(null, 'login', isGuest) +
     '<div class="auth-wrap"><div class="auth-card">' +
       '<div class="auth-brand">' +
         '<div class="brand-mark" style="width:48px;height:48px"><i class="fa-solid fa-dna" style="font-size:22px"></i></div>' +
@@ -1086,14 +1088,19 @@ function renderLogin(ctx) {
         '<button type="submit" class="btn btn-primary btn-block btn-lg"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in</button>' +
       '</form>' +
 
-      '<div class="auth-divider">or</div>' +
-
-      '<form method="POST" action="/guest">' +
-        '<button type="submit" class="btn btn-outline btn-block btn-lg">' +
-          '<i class="fa-solid fa-user-secret"></i>Continue as Guest' +
-        '</button>' +
-      '</form>' +
-      '<p class="foot-note" style="margin-top:12px;font-size:12.5px">Guests can browse public files, download, and share — but cannot rate, comment, or upload.</p>' +
+      // Only show "Continue as Guest" if NOT already a guest
+      (!isGuest
+        ? '<div class="auth-divider">or</div>' +
+          '<form method="POST" action="/guest">' +
+            '<button type="submit" class="btn btn-outline btn-block btn-lg">' +
+              '<i class="fa-solid fa-user-secret"></i>Continue as Guest' +
+            '</button>' +
+          '</form>' +
+          '<p class="foot-note" style="margin-top:12px;font-size:12.5px">Guests can browse public files, download, and share — but cannot rate, comment, or upload.</p>'
+        : '<div class="alert alert-info" style="margin-top:18px;margin-bottom:0">' +
+            '<i class="fa-solid fa-circle-info"></i>' +
+            '<span>You\'re currently browsing as a guest. Signing in below will log you into your real account.</span>' +
+          '</div>') +
 
       '<p class="foot-note">Need an account? <a href="/register">Register</a></p>' +
     '</div></div>';
@@ -1241,8 +1248,7 @@ function renderCard(record, viewer, isGuest) {
 function renderListing(ctx) {
   const {
     viewer, isGuest, title, subtitle, records, activeNav,
-    filter = 'all', sort = 'recent', query = '', showFilters = true,
-    guestNotice = false
+    filter = 'all', sort = 'recent', query = '', showFilters = true
   } = ctx;
 
   const cards = records.map((r) => renderCard(r, viewer, isGuest)).join('');
@@ -1409,7 +1415,6 @@ function renderUpload(ctx) {
           '<button type="button" role="tab" class="tab' + (safeActiveTab === 'other' ? ' active' : '') + '" data-tab="other"><i class="fa-solid fa-box-open"></i>Upload Other Things</button>' +
         '</div>' +
 
-        // TAB 1: NOTES
         '<div class="tab-panel' + (safeActiveTab === 'notes' ? ' active' : '') + '" id="panel-notes">' +
           '<form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form-notes">' +
             '<input type="hidden" name="kind" value="note">' +
@@ -1469,7 +1474,6 @@ function renderUpload(ctx) {
           '</form>' +
         '</div>' +
 
-        // TAB 2: OTHER
         '<div class="tab-panel' + (safeActiveTab === 'other' ? ' active' : '') + '" id="panel-other">' +
           '<form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form-other">' +
             '<input type="hidden" name="kind" value="other">' +
@@ -1727,7 +1731,6 @@ function renderFileDetail(ctx) {
     '</div></div>';
   }
 
-  // Rating block — different for guests
   let ratingBlock = '';
   if (isGuest) {
     ratingBlock = '<div class="rating-block">' +
@@ -1770,7 +1773,6 @@ function renderFileDetail(ctx) {
   const ownerSubscribers = owner && owner.subscribers ? owner.subscribers.length : 0;
   const ownerPublicFiles = ctx.ownerPublicFiles || 0;
 
-  // Subscribe button — different for guests
   let subscribeBtn = '';
   if (isGuest) {
     subscribeBtn = '<a class="btn btn-outline btn-block" href="/login"><i class="fa-solid fa-arrow-right-to-bracket"></i>Sign in to subscribe</a>';
@@ -1913,7 +1915,6 @@ function renderFileDetail(ctx) {
       '</div>' +
     '</div>' +
 
-    // Rating script (only rendered when not a guest)
     (!isGuest ? '<script>(function(){' +
       'var block=document.getElementById("rating-block");if(!block)return;' +
       'var fileId=block.getAttribute("data-file-id");' +
@@ -2606,13 +2607,14 @@ app.get('/gallery', requireAuth, async (req, res, next) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Auth
+ * Auth routes
  * ------------------------------------------------------------------ */
+
+/* IMPORTANT: Guests CAN visit /register and /login. Only real users are redirected. */
 app.get('/register', (req, res) => {
   if (req.user) return res.redirect('/');
-  if (req.isGuest) return res.redirect('/');
   const info = req.query.guestBlocked ? 'Please sign in or create an account to use that feature.' : '';
-  res.send(renderRegister({ info }));
+  res.send(renderRegister({ info, isGuest: req.isGuest }));
 });
 
 app.post('/register', async (req, res, next) => {
@@ -2625,16 +2627,16 @@ app.post('/register', async (req, res, next) => {
     const values = { name, email, username };
 
     if (!name || !email || !username || !password) {
-      return res.status(400).send(renderRegister({ error: 'All fields are required.', values }));
+      return res.status(400).send(renderRegister({ error: 'All fields are required.', values, isGuest: req.isGuest }));
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).send(renderRegister({ error: 'Please enter a valid email address.', values }));
+      return res.status(400).send(renderRegister({ error: 'Please enter a valid email address.', values, isGuest: req.isGuest }));
     }
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
-      return res.status(400).send(renderRegister({ error: 'Username must be 3–20 characters and contain only letters, numbers, or underscores.', values }));
+      return res.status(400).send(renderRegister({ error: 'Username must be 3–20 characters and contain only letters, numbers, or underscores.', values, isGuest: req.isGuest }));
     }
     if (password.length < 6) {
-      return res.status(400).send(renderRegister({ error: 'Password must be at least 6 characters long.', values }));
+      return res.status(400).send(renderRegister({ error: 'Password must be at least 6 characters long.', values, isGuest: req.isGuest }));
     }
 
     const dupe = await User.findOne({
@@ -2648,12 +2650,12 @@ app.post('/register', async (req, res, next) => {
       const msg = String(dupe.username).toLowerCase() === username.toLowerCase()
         ? 'That username is already taken.'
         : 'That email address is already registered.';
-      return res.status(409).send(renderRegister({ error: msg, values }));
+      return res.status(409).send(renderRegister({ error: msg, values, isGuest: req.isGuest }));
     }
 
     await User.create({ name, email, username, passwordHash: hashPassword(password) });
 
-    // Clear any guest flag
+    // Regenerate to clear any guest flag, then send to login
     req.session.regenerate((err) => {
       if (err) console.error('[biologynotes] register regenerate error:', err);
       req.session.registered = true;
@@ -2663,20 +2665,21 @@ app.post('/register', async (req, res, next) => {
     if (err && err.code === 11000) {
       return res.status(409).send(renderRegister({
         error: 'That username or email is already registered.',
-        values: req.body || {}
+        values: req.body || {},
+        isGuest: req.isGuest
       }));
     }
     next(err);
   }
 });
 
+/* IMPORTANT: Guests CAN visit /login. Only real users are redirected. */
 app.get('/login', (req, res) => {
   if (req.user) return res.redirect('/');
-  if (req.isGuest) return res.redirect('/');
   const info = req.query.guestBlocked
     ? 'That feature requires a real account. Sign in or register to continue.'
     : (req.query.accountDeleted ? 'Your account was deleted successfully.' : '');
-  res.send(renderLogin({ info }));
+  res.send(renderLogin({ info, isGuest: req.isGuest }));
 });
 
 app.post('/login', async (req, res, next) => {
@@ -2686,7 +2689,7 @@ app.post('/login', async (req, res, next) => {
     const password = String(body.password || '');
 
     if (!username || !password) {
-      return res.status(400).send(renderLogin({ error: 'Username and password are required.', values: { username } }));
+      return res.status(400).send(renderLogin({ error: 'Username and password are required.', values: { username }, isGuest: req.isGuest }));
     }
 
     const user = await User.findOne({
@@ -2694,7 +2697,7 @@ app.post('/login', async (req, res, next) => {
     });
 
     if (!user || !verifyPassword(password, user.passwordHash)) {
-      return res.status(401).send(renderLogin({ error: 'Invalid username or password.', values: { username } }));
+      return res.status(401).send(renderLogin({ error: 'Invalid username or password.', values: { username }, isGuest: req.isGuest }));
     }
 
     req.session.regenerate((err) => {
@@ -2702,7 +2705,8 @@ app.post('/login', async (req, res, next) => {
         console.error('[biologynotes] login regenerate error:', err);
         return res.status(500).send(renderLogin({
           error: 'Something went wrong while signing you in. Please try again.',
-          values: { username }
+          values: { username },
+          isGuest: req.isGuest
         }));
       }
       req.session.userId = String(user._id);
