@@ -107,6 +107,36 @@ const A4_THUMB_W = 620;
 const A4_THUMB_H = 877;
 
 /* ------------------------------------------------------------------ *
+ * Favicon — inline SVG data URI (no external file needed)
+ * A minimal zinc-on-white DNA badge matching the brand.
+ * ------------------------------------------------------------------ */
+const FAVICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+    '<rect width="64" height="64" fill="#18181b"/>' +
+    '<g fill="none" stroke="#fafafa" stroke-width="4" stroke-linecap="round">' +
+      '<path d="M22 12c0 10 20 30 20 40"/>' +
+      '<path d="M42 12c0 10-20 30-20 40"/>' +
+      '<path d="M24 22h16"/>' +
+      '<path d="M22 32h20"/>' +
+      '<path d="M24 42h16"/>' +
+    '</g>' +
+  '</svg>';
+
+const FAVICON_DATA_URI = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(FAVICON_SVG);
+
+const FAVICON_LINK =
+  '<link rel="icon" type="image/svg+xml" href="' + FAVICON_DATA_URI + '">' +
+  '<link rel="alternate icon" href="' + FAVICON_DATA_URI + '">' +
+  '<link rel="apple-touch-icon" href="' + FAVICON_DATA_URI + '">' +
+  '<link rel="mask-icon" href="' + FAVICON_DATA_URI + '" color="#18181b">' +
+  '<meta name="theme-color" content="#18181b">' +
+  '<meta name="application-name" content="BiologyNotes">' +
+  '<meta name="apple-mobile-web-app-title" content="BiologyNotes">';
+
+const GOOGLE_VERIFICATION_META =
+  '<meta name="google-site-verification" content="DWCXYjGiC1wcfs-PwgwpSYUoAASJLNUOMR3tQ7f9Nos" />';
+
+/* ------------------------------------------------------------------ *
  * Mongoose schemas
  * ------------------------------------------------------------------ */
 
@@ -656,7 +686,6 @@ p{margin:0}
 .detail-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,1fr);gap:22px;align-items:start}
 @media (max-width:880px){.detail-grid{grid-template-columns:1fr}}
 
-/* Base preview (dark, for media) */
 .detail-preview{background:#0a0a0a;border:1px solid #18181b;min-height:320px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
 .detail-preview img{max-width:100%;max-height:620px;display:block}
 .detail-preview video{max-width:100%;max-height:620px;display:block;background:#000}
@@ -665,7 +694,6 @@ p{margin:0}
 .detail-preview .placeholder i{font-size:64px;color:#52525b}
 .detail-preview .placeholder .kind-label{font-size:11px;letter-spacing:.16em;font-weight:600;color:#fafafa;font-family:'Poppins',sans-serif}
 
-/* Light preview for documents (pdf, docx, txt, etc.) */
 .detail-preview-light{
   background: linear-gradient(135deg,#fafafa 0%,#f0f0f1 100%);
   border-color:#e4e4e7;
@@ -685,7 +713,6 @@ p{margin:0}
 }
 .detail-preview-light .detail-a4-wrap{position:relative;z-index:1;padding:0;min-height:auto;background:transparent;border:0;display:flex;align-items:center;justify-content:center}
 
-/* A4 sheet on detail page */
 .detail-a4-wrap{display:flex;align-items:center;justify-content:center;min-height:420px;padding:0}
 .detail-a4{
   aspect-ratio:210/297;width:100%;max-width:420px;background:#fff;border:1px solid #d4d4d8;
@@ -697,7 +724,6 @@ p{margin:0}
 .detail-a4 .a4-fallback .lines{width:70%;gap:7px}
 .detail-a4 .a4-fallback .lines span{height:2px}
 
-/* Sidebar A4 thumbnail card */
 .a4-thumb-card{background:#fff;border:1px solid #e4e4e7;display:flex;flex-direction:column}
 .a4-thumb-card-head{
   display:flex;align-items:center;gap:8px;
@@ -727,7 +753,6 @@ p{margin:0}
   max-width:230px;
 }
 
-/* Share card */
 .share-card{background:#fff;border:1px solid #e4e4e7;padding:18px;display:flex;flex-direction:column;gap:14px}
 .share-card-head{
   font-family:'Poppins',sans-serif;font-size:12.5px;font-weight:600;
@@ -833,6 +858,8 @@ function layout(title, body) {
     '<head>\n' +
     '<meta charset="utf-8">\n' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+    GOOGLE_VERIFICATION_META + '\n' +
+    FAVICON_LINK + '\n' +
     '<title>' + escapeHtml(title) + '</title>\n' +
     FONTS_LINK + '\n' +
     FA_LINK + '\n' +
@@ -1242,7 +1269,7 @@ function renderUpload(ctx) {
 }
 
 /* ------------------------------------------------------------------ *
- * Share card (no print button)
+ * Share card
  * ------------------------------------------------------------------ */
 
 function renderShareCard() {
@@ -1280,7 +1307,6 @@ function renderFileDetail(ctx) {
   const subscribed = ownerId !== viewerId && isSubscribed(user, ownerId);
   const isSelf = ownerId === viewerId;
 
-  // Build preview + choose container class.
   let preview;
   let previewExtraClass = '';
 
@@ -1294,7 +1320,6 @@ function renderFileDetail(ctx) {
     previewExtraClass = ' detail-preview-light';
     preview = '<iframe src="' + escapeHtml(src) + '" title="PDF preview"></iframe>';
   } else {
-    // Raw docs / text / unknown — light grid + centered A4 sheet.
     previewExtraClass = ' detail-preview-light';
     const thumbUrl = record.thumbnailUrl || buildA4ThumbnailUrl(record);
     const inner = thumbUrl
@@ -1421,7 +1446,6 @@ function renderFileDetail(ctx) {
       '</div>' +
     '</div>' +
 
-    // Rating widget script
     '<script>(function(){' +
       'var block=document.getElementById("rating-block");if(!block)return;' +
       'var fileId=block.getAttribute("data-file-id");' +
@@ -1442,7 +1466,6 @@ function renderFileDetail(ctx) {
       '});' +
     '})();</script>' +
 
-    // Share script (print removed)
     '<script>(function(){' +
       'var buttons=document.querySelectorAll("[data-share]");if(!buttons.length)return;' +
       'var pageUrl=window.location.href;' +
@@ -1649,6 +1672,33 @@ function uploadSingle(req, res, next) {
     }));
   });
 }
+
+/* ------------------------------------------------------------------ *
+ * Favicon route (in addition to inline data-URI link)
+ * ------------------------------------------------------------------ */
+app.get('/favicon.ico', (req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(FAVICON_SVG);
+});
+
+app.get('/favicon.svg', (req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(FAVICON_SVG);
+});
+
+/* ------------------------------------------------------------------ *
+ * robots.txt (helps Google index)
+ * ------------------------------------------------------------------ */
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send(
+    'User-agent: *\n' +
+    'Allow: /\n' +
+    'Disallow: /upload\n' +
+    'Disallow: /logout\n'
+  );
+});
 
 /* ------------------------------------------------------------------ *
  * Routes — home / gallery
