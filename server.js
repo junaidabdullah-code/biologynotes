@@ -7,7 +7,7 @@
  * Icons: Font Awesome 6
  * Storage: Cloudinary (works on Render free tier)
  * Thumbnails: A4 aspect-ratio (210:297) generated via Cloudinary transformations
- * Features: auth, notes + other uploads with tags, ratings, subscriptions, delete, share, avatars
+ * Features: auth, notes + other uploads with tags, ratings, subscriptions, delete, edit, share, avatars
  *
  * Run with: node server.js
  */
@@ -102,14 +102,13 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
-// A4 thumbnail dimensions (210mm × 297mm → ~0.707 ratio).
 const A4_THUMB_W = 620;
 const A4_THUMB_H = 877;
 
 const MAX_TAGS = 3;
 
 /* ------------------------------------------------------------------ *
- * Favicon — inline SVG data URI
+ * Favicon + Google verification
  * ------------------------------------------------------------------ */
 const FAVICON_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
@@ -353,7 +352,6 @@ function stripExtension(name) {
   return String(name || '').replace(/\.[^.]+$/, '') || 'Untitled';
 }
 
-/** Renders an avatar (image if avatarUrl, else initial letter). */
 function renderAvatar(user, size) {
   const sz = size || 46;
   const cls = sz >= 40 ? 'avatar' : 'avatar-sm';
@@ -525,7 +523,6 @@ p{margin:0}
 
 .card{background:#fff;border:1px solid #e4e4e7;padding:26px;box-shadow:0 1px 2px rgba(24,24,27,.04)}
 
-/* Avatars */
 .avatar{background:#18181b;color:#fafafa;display:flex;align-items:center;justify-content:center;font-weight:600;flex:0 0 auto;font-family:'Playfair Display', serif;overflow:hidden}
 .avatar-sm{background:#18181b;color:#fafafa;display:flex;align-items:center;justify-content:center;font-weight:600;flex:0 0 auto;font-family:'Playfair Display',serif;overflow:hidden}
 .avatar-img{border:1px solid #e4e4e7}
@@ -549,11 +546,14 @@ p{margin:0}
 .btn-ghost:hover{background:#f4f4f5;color:#18181b}
 .btn-danger{background:#fff;color:#b91c1c;border-color:#fecaca}
 .btn-danger:hover{background:#fef2f2}
+.btn-danger-solid{background:#b91c1c;color:#fff;border-color:#b91c1c}
+.btn-danger-solid:hover{background:#991b1b;border-color:#991b1b}
 .btn-block{width:100%}
 .btn-xs{height:32px;padding:0 11px;font-size:12.5px}
 .btn-xs i{font-size:11.5px}
 .btn-lg{height:46px;padding:0 22px;font-size:14.5px}
 .btn-lg i{font-size:15px}
+.btn-icon-xs{width:32px;height:32px;padding:0;font-size:12.5px}
 
 .alert{padding:12px 15px;font-size:13.5px;margin-bottom:18px;border:1px solid #e4e4e7;background:#f4f4f5;color:#3f3f46;font-family:'Poppins',sans-serif;display:flex;align-items:flex-start;gap:10px}
 .alert i{font-size:14px;margin-top:2px}
@@ -623,13 +623,11 @@ p{margin:0}
 .preview .type-badge{position:absolute;top:12px;left:12px;background:rgba(24,24,27,.88);color:#fafafa;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px);z-index:2}
 .preview .vis-badge{position:absolute;bottom:12px;right:12px;background:rgba(255,255,255,.95);color:#18181b;font-size:10px;font-weight:600;letter-spacing:.09em;padding:4px 7px;border:1px solid #e4e4e7;font-family:'Poppins',sans-serif;backdrop-filter:blur(4px);z-index:2}
 
-/* NOTES ribbon on the top-right */
 .ribbon{
   position:absolute;top:0;right:0;z-index:3;
   background:#facc15;color:#18181b;
   font-family:'Poppins',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.14em;
-  padding:7px 12px;
-  text-transform:uppercase;
+  padding:7px 12px;text-transform:uppercase;
   box-shadow:0 2px 6px rgba(24,24,27,.18);
   display:inline-flex;align-items:center;gap:5px;
 }
@@ -662,23 +660,15 @@ p{margin:0}
 .uploader-mini{display:flex;align-items:center;gap:8px;color:#3f3f46;font-size:12.5px;min-width:0;font-family:'Poppins',sans-serif}
 .uploader-mini a{color:#18181b;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .uploader-mini a:hover{text-decoration:underline;text-underline-offset:2px}
+.owner-actions{display:inline-flex;gap:6px;align-items:center}
 
 .empty{text-align:center;padding:64px 24px;border:1px dashed #e4e4e7;background:#fff;color:#71717a}
 .empty i{font-size:44px;color:#d4d4d8;margin-bottom:14px;display:block}
 .empty h3{font-size:18px;color:#18181b;margin-bottom:6px;font-family:'Playfair Display',serif}
 .empty p{margin:0 0 20px;font-size:13.5px}
 
-/* ------------------------------------------------------------------ *
- * UPLOAD TABS
- * ------------------------------------------------------------------ */
 .tabs{display:flex;border-bottom:1px solid #e4e4e7;margin-bottom:22px;gap:0}
-.tab{
-  padding:13px 20px;background:none;border:0;
-  border-bottom:2px solid transparent;margin-bottom:-1px;
-  cursor:pointer;font-family:'Poppins',sans-serif;font-size:13.5px;font-weight:500;
-  color:#71717a;display:inline-flex;align-items:center;gap:8px;
-  transition:color .15s ease,border-color .15s ease,background-color .15s ease;
-}
+.tab{padding:13px 20px;background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Poppins',sans-serif;font-size:13.5px;font-weight:500;color:#71717a;display:inline-flex;align-items:center;gap:8px;transition:color .15s ease,border-color .15s ease,background-color .15s ease}
 .tab i{font-size:13px}
 .tab:hover{color:#18181b;background:#f4f4f5}
 .tab.active{color:#18181b;border-bottom-color:#18181b}
@@ -712,21 +702,13 @@ p{margin:0}
 .progress.on{display:block}
 .progress-bar{height:100%;width:0;background:#18181b;transition:width .25s ease}
 
-/* Tags input */
 .tags-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 @media (max-width:640px){.tags-grid{grid-template-columns:1fr}}
 .tag-field{position:relative}
-.tag-field .tag-prefix{
-  position:absolute;top:50%;left:12px;transform:translateY(-50%);
-  color:#a1a1aa;font-family:'Poppins',sans-serif;font-size:14px;font-weight:500;
-  pointer-events:none;
-}
+.tag-field .tag-prefix{position:absolute;top:50%;left:12px;transform:translateY(-50%);color:#a1a1aa;font-family:'Poppins',sans-serif;font-size:14px;font-weight:500;pointer-events:none}
 .tag-field .input{padding-left:28px}
 .tag-hint{font-size:11.5px;color:#a1a1aa;font-family:'Poppins',sans-serif;margin-top:6px;display:flex;align-items:center;gap:6px}
 
-/* ------------------------------------------------------------------ *
- * DETAIL PAGE
- * ------------------------------------------------------------------ */
 .detail-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,1fr);gap:22px;align-items:start}
 @media (max-width:880px){.detail-grid{grid-template-columns:1fr}}
 
@@ -821,7 +803,6 @@ p{margin:0}
 .uploader-stats span{display:inline-flex;align-items:center;gap:6px}
 .uploader-stats i{font-size:11.5px;color:#a1a1aa}
 
-/* Profile picture card */
 .avatar-card{background:#fff;border:1px solid #e4e4e7;padding:20px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-bottom:22px}
 .avatar-card-img{width:88px;height:88px;overflow:hidden;background:#18181b;color:#fafafa;display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:32px;font-weight:600;flex:0 0 auto}
 .avatar-card-img img{width:100%;height:100%;object-fit:cover;display:block}
@@ -852,6 +833,44 @@ p{margin:0}
 .upload-header .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#a1a1aa;font-weight:600;font-family:'Poppins',sans-serif;margin-bottom:4px}
 .upload-header h1{font-size:28px}
 
+/* ------------------------------------------------------------------ *
+ * Confirm modal (styled like Render's prompts)
+ * ------------------------------------------------------------------ */
+.modal-backdrop{
+  position:fixed;inset:0;z-index:1000;
+  background:rgba(24,24,27,.55);
+  display:flex;align-items:center;justify-content:center;
+  padding:20px;
+  animation:bnFadeIn .15s ease;
+}
+.modal-backdrop[hidden]{display:none}
+@keyframes bnFadeIn{from{opacity:0}to{opacity:1}}
+.modal{
+  background:#fff;border:1px solid #e4e4e7;
+  max-width:440px;width:100%;padding:26px;
+  box-shadow:0 20px 50px rgba(0,0,0,.35),0 8px 20px rgba(0,0,0,.25);
+  animation:bnModalIn .18s ease;
+}
+@keyframes bnModalIn{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+.modal-icon{
+  width:48px;height:48px;margin-bottom:16px;
+  display:flex;align-items:center;justify-content:center;font-size:22px;
+  background:#f4f4f5;color:#18181b;
+}
+.modal[data-variant="danger"] .modal-icon{background:#fef2f2;color:#b91c1c}
+.modal[data-variant="warning"] .modal-icon{background:#fefce8;color:#854d0e}
+.modal[data-variant="primary"] .modal-icon{background:#f4f4f5;color:#18181b}
+.modal-title{
+  font-family:'Playfair Display',serif;font-size:21px;font-weight:700;
+  letter-spacing:-.015em;margin:0 0 8px;color:#18181b;
+}
+.modal-message{
+  font-family:'Merriweather',serif;font-size:14px;line-height:1.6;
+  color:#52525b;margin:0 0 22px;
+}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+.modal-actions .btn{min-width:110px}
+
 @media (max-width:640px){
   .container{padding:18px 14px 60px}
   .container-narrow{padding:32px 14px}
@@ -872,12 +891,85 @@ p{margin:0}
   .detail-preview-light iframe{height:420px}
   .tabs{gap:0}
   .tab{padding:11px 14px;font-size:12.5px}
+  .modal{padding:20px}
+  .modal-actions .btn{min-width:0;flex:1}
 }
 `;
 
 /* ------------------------------------------------------------------ *
- * Layout + shared UI
+ * Layout + confirm modal + shared UI
  * ------------------------------------------------------------------ */
+
+const CONFIRM_MODAL_HTML =
+  '<div class="modal-backdrop" id="bn-modal" hidden aria-hidden="true">' +
+    '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="bn-modal-title" id="bn-modal-inner" data-variant="danger">' +
+      '<div class="modal-icon" id="bn-modal-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>' +
+      '<h2 class="modal-title" id="bn-modal-title">Are you sure?</h2>' +
+      '<p class="modal-message" id="bn-modal-message">This action cannot be undone.</p>' +
+      '<div class="modal-actions">' +
+        '<button type="button" class="btn btn-outline" id="bn-modal-cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-danger-solid" id="bn-modal-confirm">Confirm</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+
+const CONFIRM_MODAL_SCRIPT =
+  '<script>(function(){' +
+    'var backdrop=document.getElementById("bn-modal");if(!backdrop)return;' +
+    'var inner=document.getElementById("bn-modal-inner");' +
+    'var titleEl=document.getElementById("bn-modal-title");' +
+    'var msgEl=document.getElementById("bn-modal-message");' +
+    'var iconEl=document.getElementById("bn-modal-icon");' +
+    'var cancelBtn=document.getElementById("bn-modal-cancel");' +
+    'var confirmBtn=document.getElementById("bn-modal-confirm");' +
+    'var resolveFn=null;' +
+    'function open(opts){' +
+      'opts=opts||{};' +
+      'titleEl.textContent=opts.title||"Are you sure?";' +
+      'msgEl.textContent=opts.message||"This action cannot be undone.";' +
+      'confirmBtn.textContent=opts.confirmText||"Confirm";' +
+      'cancelBtn.textContent=opts.cancelText||"Cancel";' +
+      'var variant=opts.variant||"danger";' +
+      'inner.setAttribute("data-variant",variant);' +
+      'confirmBtn.className="btn "+(variant==="primary"?"btn-primary":(variant==="warning"?"btn-primary":"btn-danger-solid"));' +
+      'iconEl.innerHTML=\'<i class="fa-solid \'+(opts.icon|| (variant==="danger"?"fa-triangle-exclamation":(variant==="warning"?"fa-circle-exclamation":"fa-circle-question")) )+\'"></i>\';' +
+      'backdrop.hidden=false;backdrop.setAttribute("aria-hidden","false");' +
+      'document.body.style.overflow="hidden";' +
+      'setTimeout(function(){confirmBtn.focus();},30);' +
+    '}' +
+    'function close(result){' +
+      'backdrop.hidden=true;backdrop.setAttribute("aria-hidden","true");' +
+      'document.body.style.overflow="";' +
+      'if(resolveFn){var r=resolveFn;resolveFn=null;r(result);}' +
+    '}' +
+    'function bnConfirm(opts){' +
+      'return new Promise(function(resolve){resolveFn=resolve;open(opts||{});});' +
+    '}' +
+    'cancelBtn.addEventListener("click",function(){close(false);});' +
+    'confirmBtn.addEventListener("click",function(){close(true);});' +
+    'backdrop.addEventListener("click",function(e){if(e.target===backdrop)close(false);});' +
+    'document.addEventListener("keydown",function(e){if(!backdrop.hidden&&e.key==="Escape")close(false);});' +
+    'window.bnConfirm=bnConfirm;' +
+
+    // Auto-bind any form with data-confirm
+    'document.addEventListener("submit",function(e){' +
+      'var form=e.target;if(!form||form.tagName!=="FORM")return;' +
+      'var msg=form.getAttribute("data-confirm");' +
+      'if(!msg)return;' +
+      'if(form.dataset.bnConfirmed==="1"){delete form.dataset.bnConfirmed;return;}' +
+      'e.preventDefault();' +
+      'bnConfirm({' +
+        'title:form.getAttribute("data-confirm-title")||"Please confirm",' +
+        'message:msg,' +
+        'confirmText:form.getAttribute("data-confirm-action")||"Confirm",' +
+        'cancelText:form.getAttribute("data-confirm-cancel")||"Cancel",' +
+        'variant:form.getAttribute("data-confirm-variant")||"danger",' +
+        'icon:form.getAttribute("data-confirm-icon")||""' +
+      '}).then(function(ok){' +
+        'if(ok){form.dataset.bnConfirmed="1";form.submit();}' +
+      '});' +
+    '},true);' +
+  '})();</script>';
 
 function layout(title, body) {
   return '<!DOCTYPE html>\n' +
@@ -893,6 +985,8 @@ function layout(title, body) {
     '<style>' + CSS + '</style>\n' +
     '</head>\n<body>\n' +
     body +
+    CONFIRM_MODAL_HTML +
+    CONFIRM_MODAL_SCRIPT +
     '\n</body>\n</html>';
 }
 
@@ -1036,8 +1130,9 @@ function renderCard(record, viewer) {
   const viewerId = viewer ? String(viewer._id) : null;
   const subscribed = viewer && viewerId !== ownerId && isSubscribed(viewer, ownerId);
   const isSelf = viewer && viewerId === ownerId;
+  const fileId = String(record._id);
 
-  // Top row of badges
+  // Top badges
   const badges = [];
   if (isNote) {
     badges.push('<span class="badge badge-dark"><i class="fa-solid fa-bookmark"></i>CH ' + escapeHtml(record.chapterNo) + '</span>');
@@ -1057,13 +1152,21 @@ function renderCard(record, viewer) {
     }
   }
 
-  // Action button in footer
+  // Footer action button(s)
   let actionBtn = '';
   if (viewer && isSelf) {
-    actionBtn = '<form method="POST" action="/files/' + encodeURIComponent(String(record._id)) + '/delete" class="inline-form" onsubmit="return confirm(\'Delete this file permanently? This cannot be undone.\');">' +
-      '<button type="submit" class="btn btn-xs btn-danger" title="Delete file">' +
-        '<i class="fa-solid fa-trash-can"></i>Delete' +
-      '</button></form>';
+    actionBtn =
+      '<div class="owner-actions">' +
+        '<a href="/files/' + encodeURIComponent(fileId) + '/edit" class="btn btn-xs btn-outline btn-icon-xs" title="Edit"><i class="fa-solid fa-pen"></i></a>' +
+        '<form method="POST" action="/files/' + encodeURIComponent(fileId) + '/delete" class="inline-form"' +
+          ' data-confirm="This file will be permanently deleted. This action cannot be undone."' +
+          ' data-confirm-title="Delete this file?"' +
+          ' data-confirm-action="Delete"' +
+          ' data-confirm-variant="danger"' +
+          ' data-confirm-icon="fa-trash-can">' +
+          '<button type="submit" class="btn btn-xs btn-danger btn-icon-xs" title="Delete"><i class="fa-solid fa-trash-can"></i></button>' +
+        '</form>' +
+      '</div>';
   } else if (viewer) {
     actionBtn = '<form method="POST" action="/users/' + ownerId + '/subscribe" class="inline-form">' +
       '<button type="submit" class="btn btn-xs ' + (subscribed ? 'btn-outline' : 'btn-primary') + '">' +
@@ -1081,7 +1184,7 @@ function renderCard(record, viewer) {
       renderPreview(record) +
       '<div class="file-body">' +
         '<div class="file-top">' + badges.join('') + '</div>' +
-        '<h3 class="file-title"><a href="/files/' + encodeURIComponent(String(record._id)) + '">' + escapeHtml(record.chapterName) + '</a></h3>' +
+        '<h3 class="file-title"><a href="/files/' + encodeURIComponent(fileId) + '">' + escapeHtml(record.chapterName) + '</a></h3>' +
         '<p class="file-sub"><i class="fa-solid fa-pen-nib"></i> ' + escapeHtml(record.writer || ownerName || 'Unknown') + ' &middot; ' + escapeHtml(formatBytes(record.size)) + '</p>' +
         (record.description ? '<p class="file-desc">' + escapeHtml(record.description) + '</p>' : '') +
         '<div class="file-stats">' +
@@ -1233,13 +1336,12 @@ function renderUpload(ctx) {
 
         (error ? '<div class="alert alert-error"><i class="fa-solid fa-circle-exclamation"></i><span>' + escapeHtml(error) + '</span></div>' : '') +
 
-        // Tabs
         '<div class="tabs" role="tablist">' +
           '<button type="button" role="tab" class="tab' + (safeActiveTab === 'notes' ? ' active' : '') + '" data-tab="notes"><i class="fa-solid fa-book"></i>Notes</button>' +
           '<button type="button" role="tab" class="tab' + (safeActiveTab === 'other' ? ' active' : '') + '" data-tab="other"><i class="fa-solid fa-box-open"></i>Upload Other Things</button>' +
         '</div>' +
 
-        // ============ TAB 1: NOTES ============
+        // TAB 1: NOTES
         '<div class="tab-panel' + (safeActiveTab === 'notes' ? ' active' : '') + '" id="panel-notes">' +
           '<form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form-notes">' +
             '<input type="hidden" name="kind" value="note">' +
@@ -1300,7 +1402,7 @@ function renderUpload(ctx) {
           '</form>' +
         '</div>' +
 
-        // ============ TAB 2: OTHER THINGS ============
+        // TAB 2: OTHER
         '<div class="tab-panel' + (safeActiveTab === 'other' ? ' active' : '') + '" id="panel-other">' +
           '<form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form-other">' +
             '<input type="hidden" name="kind" value="other">' +
@@ -1339,11 +1441,11 @@ function renderUpload(ctx) {
               '<label class="label">Tags <span style="color:#a1a1aa;font-weight:400">(up to 3)</span></label>' +
               '<div class="tags-grid">' +
                 '<div class="tag-field"><span class="tag-prefix">#</span>' +
-                  '<input class="input" name="tag1" type="text" placeholder="Tag 1" maxlength="30"></div>' +
+                  '<input class="input" name="tag1" type="text" placeholder="Tag 1" maxlength="30" value="' + escapeHtml(values.tag1 || '') + '"></div>' +
                 '<div class="tag-field"><span class="tag-prefix">#</span>' +
-                  '<input class="input" name="tag2" type="text" placeholder="Tag 2" maxlength="30"></div>' +
+                  '<input class="input" name="tag2" type="text" placeholder="Tag 2" maxlength="30" value="' + escapeHtml(values.tag2 || '') + '"></div>' +
                 '<div class="tag-field"><span class="tag-prefix">#</span>' +
-                  '<input class="input" name="tag3" type="text" placeholder="Tag 3" maxlength="30"></div>' +
+                  '<input class="input" name="tag3" type="text" placeholder="Tag 3" maxlength="30" value="' + escapeHtml(values.tag3 || '') + '"></div>' +
               '</div>' +
               '<p class="tag-hint"><i class="fa-solid fa-circle-info"></i>Add up to 3 tags. At least one tag is required.</p>' +
             '</div>' +
@@ -1371,10 +1473,8 @@ function renderUpload(ctx) {
       '</div>' +
     '</div>' +
 
-    // --------------- SCRIPTS ---------------
     '<script>' +
     '(function(){' +
-      // Tab switching
       'var tabs=document.querySelectorAll(".tab");' +
       'var panels={notes:document.getElementById("panel-notes"),other:document.getElementById("panel-other")};' +
       'function activateTab(name){' +
@@ -1384,7 +1484,6 @@ function renderUpload(ctx) {
       '}' +
       'tabs.forEach(function(t){t.addEventListener("click",function(){activateTab(t.getAttribute("data-tab"));});});' +
 
-      // Dropzone initializer
       'function fmt(b){if(!b&&b!==0)return "0 B";var u=["B","KB","MB","GB"],i=Math.min(Math.floor(Math.log(b)/Math.log(1024)),u.length-1);var v=b/Math.pow(1024,i);return v.toFixed(i===0?0:1)+" "+u[i];}' +
       'function iconFor(name,mime){var ext=(name.split(".").pop()||"").toLowerCase();var m=(mime||"").toLowerCase();if(m.indexOf("image/")===0)return ["fa-regular fa-image","Image"];if(m.indexOf("video/")===0)return ["fa-solid fa-video","Video"];if(m.indexOf("audio/")===0)return ["fa-solid fa-music","Audio"];if(m==="application/pdf"||ext==="pdf")return ["fa-regular fa-file-pdf","PDF"];if(m.indexOf("text/")===0||["txt","md","csv","json","js","ts","html","css","xml","yml","yaml"].indexOf(ext)>=0)return ["fa-regular fa-file-lines","Text"];return ["fa-regular fa-file","File"];}' +
 
@@ -1509,8 +1608,17 @@ function renderFileDetail(ctx) {
         '</button></form>'
     : (isSelf ? '<a class="btn btn-outline btn-block" href="/users/' + encodeURIComponent(user.username) + '"><i class="fa-regular fa-user"></i>View my profile</a>' : '');
 
+  const editBtn = isSelf
+    ? '<a class="btn btn-outline btn-xs" href="/files/' + encodeURIComponent(fid) + '/edit"><i class="fa-solid fa-pen"></i>Edit</a>'
+    : '';
+
   const deleteBtn = isSelf
-    ? '<form method="POST" action="/files/' + encodeURIComponent(fid) + '/delete" class="inline-form" onsubmit="return confirm(\'Delete this file permanently? This cannot be undone.\');">' +
+    ? '<form method="POST" action="/files/' + encodeURIComponent(fid) + '/delete" class="inline-form"' +
+        ' data-confirm="This file will be permanently deleted. This action cannot be undone."' +
+        ' data-confirm-title="Delete this file?"' +
+        ' data-confirm-action="Delete"' +
+        ' data-confirm-variant="danger"' +
+        ' data-confirm-icon="fa-trash-can">' +
         '<button type="submit" class="btn btn-danger btn-xs"><i class="fa-solid fa-trash-can"></i>Delete</button>' +
       '</form>'
     : '';
@@ -1539,7 +1647,6 @@ function renderFileDetail(ctx) {
       '</div>' +
     '</div>';
 
-  // Top badges for detail page
   const detailBadges = [];
   if (isNote) {
     detailBadges.push('<span class="badge badge-dark"><i class="fa-solid fa-bookmark"></i>Chapter ' + escapeHtml(record.chapterNo) + '</span>');
@@ -1568,6 +1675,7 @@ function renderFileDetail(ctx) {
       '<div class="flex-between" style="margin-bottom:16px">' +
         '<a class="btn btn-ghost btn-xs" href="' + (record.visibility === 'public' ? '/gallery' : '/') + '"><i class="fa-solid fa-arrow-left"></i>Back</a>' +
         '<div class="row">' +
+          editBtn +
           deleteBtn +
           '<a class="btn btn-primary btn-xs" href="/files/' + encodeURIComponent(fid) + '/download"><i class="fa-solid fa-download"></i>Download</a>' +
         '</div>' +
@@ -1682,6 +1790,116 @@ function renderFileDetail(ctx) {
 }
 
 /* ------------------------------------------------------------------ *
+ * File edit page
+ * ------------------------------------------------------------------ */
+
+function renderFileEdit(ctx) {
+  const { user, record, error = '', values } = ctx;
+  const kind = fileKind(record.mimeType, record.originalName);
+  const isNote = record.kind === 'note';
+
+  // Values take precedence on error, otherwise use current record.
+  const v = values || {
+    chapterNo: record.chapterNo || '',
+    chapterName: record.chapterName || '',
+    subject: record.subject || '',
+    writer: record.writer || '',
+    description: record.description || '',
+    visibility: record.visibility || 'public',
+    tag1: (record.tags && record.tags[0]) || '',
+    tag2: (record.tags && record.tags[1]) || '',
+    tag3: (record.tags && record.tags[2]) || ''
+  };
+
+  const visibility = v.visibility === 'private' ? 'private' : 'public';
+  const fid = String(record._id);
+
+  const fieldsHtml = isNote
+    ? '<div class="form-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 16px">' +
+        '<div class="field"><label class="label" for="e-chapterNo">Chapter No</label>' +
+          '<input class="input" id="e-chapterNo" name="chapterNo" type="number" min="0" step="1" value="' + escapeHtml(v.chapterNo) + '" placeholder="1" required></div>' +
+        '<div class="field"><label class="label" for="e-chapterName">Chapter Name</label>' +
+          '<input class="input" id="e-chapterName" name="chapterName" type="text" value="' + escapeHtml(v.chapterName) + '" placeholder="Introduction to Algebra" required maxlength="200"></div>' +
+        '<div class="field"><label class="label" for="e-subject">Subject</label>' +
+          '<input class="input" id="e-subject" name="subject" type="text" value="' + escapeHtml(v.subject) + '" placeholder="Biology" required maxlength="120"></div>' +
+        '<div class="field"><label class="label" for="e-writer">Writer</label>' +
+          '<input class="input" id="e-writer" name="writer" type="text" value="' + escapeHtml(v.writer) + '" placeholder="John Smith" required maxlength="120"></div>' +
+      '</div>'
+    : '<div class="field"><label class="label" for="e-chapterName">Title</label>' +
+        '<input class="input" id="e-chapterName" name="chapterName" type="text" value="' + escapeHtml(v.chapterName) + '" placeholder="Title of your upload" required maxlength="200"></div>' +
+      '<div class="field"><label class="label" for="e-writer">Your name</label>' +
+        '<input class="input" id="e-writer" name="writer" type="text" value="' + escapeHtml(v.writer) + '" placeholder="Your name" required maxlength="120"></div>' +
+      '<div class="field">' +
+        '<label class="label">Tags <span style="color:#a1a1aa;font-weight:400">(up to 3)</span></label>' +
+        '<div class="tags-grid">' +
+          '<div class="tag-field"><span class="tag-prefix">#</span>' +
+            '<input class="input" name="tag1" type="text" placeholder="Tag 1" maxlength="30" value="' + escapeHtml(v.tag1 || '') + '"></div>' +
+          '<div class="tag-field"><span class="tag-prefix">#</span>' +
+            '<input class="input" name="tag2" type="text" placeholder="Tag 2" maxlength="30" value="' + escapeHtml(v.tag2 || '') + '"></div>' +
+          '<div class="tag-field"><span class="tag-prefix">#</span>' +
+            '<input class="input" name="tag3" type="text" placeholder="Tag 3" maxlength="30" value="' + escapeHtml(v.tag3 || '') + '"></div>' +
+        '</div>' +
+        '<p class="tag-hint"><i class="fa-solid fa-circle-info"></i>Add up to 3 tags. At least one tag is required.</p>' +
+      '</div>';
+
+  const descriptionHtml =
+    '<div class="field">' +
+      '<label class="label" for="e-description">Description</label>' +
+      '<textarea class="textarea" id="e-description" name="description" placeholder="Short description...">' + escapeHtml(v.description || '') + '</textarea>' +
+    '</div>';
+
+  const body = '' +
+    renderTopNav(user, '') +
+    '<div class="container">' +
+      '<div class="flex-between" style="margin-bottom:16px">' +
+        '<a class="btn btn-ghost btn-xs" href="/files/' + encodeURIComponent(fid) + '"><i class="fa-solid fa-arrow-left"></i>Back to file</a>' +
+        '<div class="row">' +
+          '<span class="badge ' + (isNote ? 'badge-dark' : '') + '">' + (isNote ? '<i class="fa-solid fa-book"></i>NOTE' : '<i class="fa-solid fa-box-open"></i>OTHER') + '</span>' +
+          '<span class="badge badge-type"><i class="' + kindIconClass(kind) + '"></i>' + kindLabel(kind) + '</span>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="card">' +
+        '<div class="upload-header">' +
+          '<div>' +
+            '<div class="eyebrow">Edit file</div>' +
+            '<h1>Update details</h1>' +
+            '<p class="sub" style="margin:6px 0 0">The file itself cannot be changed. To replace it, delete this and upload a new one.</p>' +
+          '</div>' +
+        '</div>' +
+
+        (error ? '<div class="alert alert-error"><i class="fa-solid fa-circle-exclamation"></i><span>' + escapeHtml(error) + '</span></div>' : '') +
+
+        '<form method="POST" action="/files/' + encodeURIComponent(fid) + '/edit"' +
+          ' data-confirm="These changes will be saved to the file. Continue?"' +
+          ' data-confirm-title="Save changes?"' +
+          ' data-confirm-action="Save changes"' +
+          ' data-confirm-variant="primary"' +
+          ' data-confirm-icon="fa-floppy-disk">' +
+
+          fieldsHtml +
+          descriptionHtml +
+
+          '<div class="field">' +
+            '<label class="label" for="e-visibility">Visibility</label>' +
+            '<select class="select" id="e-visibility" name="visibility">' +
+              '<option value="public"' + (visibility === 'public' ? ' selected' : '') + '>Public — visible to everyone</option>' +
+              '<option value="private"' + (visibility === 'private' ? ' selected' : '') + '>Private — visible only to you</option>' +
+            '</select>' +
+          '</div>' +
+
+          '<div class="form-actions" style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">' +
+            '<button type="submit" class="btn btn-primary btn-lg"><i class="fa-solid fa-floppy-disk"></i>Save changes</button>' +
+            '<a class="btn btn-outline btn-lg" href="/files/' + encodeURIComponent(fid) + '">Cancel</a>' +
+          '</div>' +
+        '</form>' +
+      '</div>' +
+    '</div>';
+
+  return layout('Edit · ' + record.chapterName + ' · BiologyNotes', body);
+}
+
+/* ------------------------------------------------------------------ *
  * User profile page (with avatar upload)
  * ------------------------------------------------------------------ */
 
@@ -1700,7 +1918,6 @@ function renderUserProfile(ctx) {
         '</button></form>'
     : '<span class="badge badge-dark"><i class="fa-regular fa-user"></i>This is you</span>';
 
-  // Profile picture card (only on own profile)
   const avatarImgHtml = profileUser.avatarUrl
     ? '<img src="' + escapeHtml(profileUser.avatarUrl) + '" alt="' + escapeHtml(profileUser.name) + '">'
     : escapeHtml(initial);
@@ -1723,7 +1940,12 @@ function renderUserProfile(ctx) {
               '<button type="submit" class="btn btn-primary btn-xs"><i class="fa-solid fa-cloud-arrow-up"></i>Upload</button>' +
             '</form>' +
             (profileUser.avatarUrl
-              ? '<form method="POST" action="/profile/avatar/remove" class="inline-form" onsubmit="return confirm(\'Remove your profile picture?\');">' +
+              ? '<form method="POST" action="/profile/avatar/remove" class="inline-form"' +
+                  ' data-confirm="Your profile picture will be removed."' +
+                  ' data-confirm-title="Remove profile picture?"' +
+                  ' data-confirm-action="Remove"' +
+                  ' data-confirm-variant="danger"' +
+                  ' data-confirm-icon="fa-trash-can">' +
                   '<button type="submit" class="btn btn-danger btn-xs"><i class="fa-solid fa-trash-can"></i>Remove</button>' +
                 '</form>'
               : '') +
@@ -1858,7 +2080,7 @@ function requireAuth(req, res, next) {
 }
 
 /* ------------------------------------------------------------------ *
- * Multer — memory storage → Cloudinary
+ * Multer
  * ------------------------------------------------------------------ */
 
 const upload = multer({
@@ -1879,12 +2101,10 @@ function uploadSingle(fieldName) {
 
       if (!req.user) return res.redirect('/login');
 
-      // Avatar uploads go back to the profile page
       if (name === 'avatar') {
         return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent(message));
       }
 
-      // Regular uploads go back to /upload with an error
       const activeTab = (req.body && req.body.kind === 'other') ? 'other' : 'notes';
       return res.status(400).send(renderUpload({
         user: req.user,
@@ -2146,7 +2366,6 @@ app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) =>
     const description = String(body.description || '').trim();
     const visibility = body.visibility === 'private' ? 'private' : 'public';
 
-    // Shared base values for error re-render
     const baseValues = {
       writer, description, visibility,
       chapterNo: body.chapterNo,
@@ -2157,10 +2376,7 @@ app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) =>
 
     const fail = (message, status) => {
       return res.status(status).send(renderUpload({
-        user,
-        error: message,
-        values: baseValues,
-        activeTab
+        user, error: message, values: baseValues, activeTab
       }));
     };
 
@@ -2174,7 +2390,6 @@ app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) =>
     let tags = [];
 
     if (kind === 'note') {
-      // Validate note-specific fields
       chapterNo = String(body.chapterNo || '').trim();
       chapterName = String(body.chapterName || '').trim();
       subject = String(body.subject || '').trim();
@@ -2186,12 +2401,10 @@ app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) =>
         return fail('One or more fields exceed the maximum allowed length.', 400);
       }
     } else {
-      // "other" — collect and validate tags
       const rawTags = [body.tag1, body.tag2, body.tag3]
         .map((t) => String(t || '').trim().replace(/^#+/, '').trim())
         .filter(Boolean);
 
-      // Deduplicate (case-insensitive)
       const seen = new Set();
       tags = [];
       for (const t of rawTags) {
@@ -2204,13 +2417,11 @@ app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) =>
       if (tags.some((t) => t.length > 30)) return fail('Each tag must be 30 characters or less.', 400);
       if (description.length > 2000) return fail('Description is too long (max 2000 characters).', 400);
 
-      // Use the original filename (without extension) as the title
       chapterName = stripExtension(normalizeOriginalName(req.file.originalname)).slice(0, 200) || 'Untitled';
       chapterNo = '';
       subject = '';
     }
 
-    // Upload to Cloudinary
     const result = await uploadBufferToCloudinary(req.file.buffer, req.file.originalname);
 
     const normalizedName = normalizeOriginalName(req.file.originalname);
@@ -2249,6 +2460,103 @@ app.post('/upload', requireAuth, uploadSingle('file'), async (req, res, next) =>
 });
 
 /* ------------------------------------------------------------------ *
+ * Routes — edit file
+ * ------------------------------------------------------------------ */
+
+app.get('/files/:id/edit', requireAuth, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!isValidObjectId(id)) {
+      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
+    }
+    const record = await File.findById(id).lean();
+    if (!record) {
+      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
+    }
+    if (String(record.owner) !== String(req.user._id)) {
+      return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You can only edit your own files.'));
+    }
+    res.send(renderFileEdit({ user: req.user, record }));
+  } catch (err) { next(err); }
+});
+
+app.post('/files/:id/edit', requireAuth, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!isValidObjectId(id)) {
+      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
+    }
+    const record = await File.findById(id);
+    if (!record) {
+      return res.status(404).send(renderErrorPage(404, 'Not found', 'That file does not exist.'));
+    }
+    if (String(record.owner) !== String(req.user._id)) {
+      return res.status(403).send(renderErrorPage(403, 'Forbidden', 'You can only edit your own files.'));
+    }
+
+    const body = req.body || {};
+    const kind = record.kind;
+    const writer = String(body.writer || '').trim();
+    const description = String(body.description || '').trim();
+    const visibility = body.visibility === 'private' ? 'private' : 'public';
+    const chapterName = String(body.chapterName || '').trim();
+
+    const values = {
+      chapterName, writer, description, visibility,
+      chapterNo: body.chapterNo,
+      subject: body.subject,
+      tag1: body.tag1, tag2: body.tag2, tag3: body.tag3
+    };
+
+    const fail = (message, status) => {
+      return res.status(status).send(renderFileEdit({
+        user: req.user, record, error: message, values
+      }));
+    };
+
+    if (!chapterName) return fail('Title / Chapter name is required.', 400);
+    if (!writer) return fail('Writer name is required.', 400);
+    if (chapterName.length > 200 || writer.length > 120 || description.length > 2000) {
+      return fail('One or more fields exceed the maximum allowed length.', 400);
+    }
+
+    if (kind === 'note') {
+      const chapterNo = String(body.chapterNo || '').trim();
+      const subject = String(body.subject || '').trim();
+      if (!chapterNo || Number.isNaN(Number(chapterNo))) return fail('Chapter number must be a valid number.', 400);
+      if (!subject) return fail('Subject is required.', 400);
+      if (subject.length > 120) return fail('Subject is too long.', 400);
+      record.chapterNo = chapterNo;
+      record.subject = subject;
+    } else {
+      const rawTags = [body.tag1, body.tag2, body.tag3]
+        .map((t) => String(t || '').trim().replace(/^#+/, '').trim())
+        .filter(Boolean);
+
+      const seen = new Set();
+      const tags = [];
+      for (const t of rawTags) {
+        const k = t.toLowerCase();
+        if (!seen.has(k)) { seen.add(k); tags.push(t); }
+        if (tags.length >= MAX_TAGS) break;
+      }
+      if (!tags.length) return fail('Please add at least one tag.', 400);
+      if (tags.some((t) => t.length > 30)) return fail('Each tag must be 30 characters or less.', 400);
+      record.tags = tags;
+    }
+
+    record.chapterName = chapterName;
+    record.writer = writer;
+    record.description = description;
+    record.visibility = visibility;
+
+    await record.save();
+
+    return res.redirect('/files/' + encodeURIComponent(id) + '?updated=success');
+  } catch (err) { next(err); }
+});
+
+/* ------------------------------------------------------------------ *
  * Routes — profile avatar
  * ------------------------------------------------------------------ */
 
@@ -2261,12 +2569,10 @@ app.post('/profile/avatar', requireAuth, uploadSingle('avatar'), async (req, res
       return res.redirect('/users/' + encodeURIComponent(req.user.username) + '?avatarError=' + encodeURIComponent('Profile picture must be an image.'));
     }
 
-    // Delete old avatar from Cloudinary (best-effort)
     if (req.user.avatarPublicId) {
       await deleteFromCloudinary(req.user.avatarPublicId, 'image');
     }
 
-    // Upload new avatar
     const result = await uploadBufferToCloudinary(
       req.file.buffer,
       req.file.originalname,
@@ -2332,7 +2638,10 @@ app.get('/files/:id', requireAuth, async (req, res, next) => {
       ? await File.countDocuments({ owner: owner._id, visibility: 'public' })
       : 0;
 
-    const notice = req.query.rated === '1' ? 'Thanks for rating!' : '';
+    let notice = '';
+    if (req.query.rated === '1') notice = 'Thanks for rating!';
+    else if (req.query.updated === 'success') notice = 'File updated successfully.';
+
     res.send(renderFileDetail({ user: req.user, record, owner, ownerPublicFiles, notice }));
   } catch (err) { next(err); }
 });
